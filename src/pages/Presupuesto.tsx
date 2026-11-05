@@ -1,0 +1,697 @@
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { crearResolverRubro, nombreDe, puedeEditar, puedeVer, signoCuenta, useDatos } from '../lib/datos'
+import { MESES, ceros, num, parseNumero, pct, suma } from '../lib/formato'
+import { construirReporte, type FilaReporte } from '../lib/reporte'
+import { supabase, traerTodo, upsertEnLotes } from '../lib/supabase'
+import { exportarPlantilla, leerPlantilla, type FilaPlantilla } from '../lib/excel'
+import type { Centro, Escenario, Monto, Vista } from '../lib/tipos'
+
+type Sel = { sede: string; unidad: string; linea: string }
+type Valores = Map<string, number[]>
+
+const claveCentro = (c: Sel) => `${c.sede}|${c.unidad}|${c.linea}`
+
+async function montosCentro(tabla: 'ppto_montos' | 'real_montos', escId: number, c: Sel) {
+  return traerTodo<Monto>((d, h) =>
+    supabase.from(tabla).select('escenario_id,anio,mes,sede,unidad,linea,cuenta,monto')
+      .eq('escenario_id', escId).eq('sede', c.sede).eq('unidad', c.unidad).eq('linea', c.linea).range(d, h))
+}
+
+async function resumen(escIds: number[]) {
+  return traerTodo<Monto>((d, h) =>
+    supabase.rpc('resumen_montos', { p_escenarios: escIds, p_incluir_ajustes: false }).range(d, h))
+}
+
+export default function Presupuesto() {
+  const { perfil, accesos, cat } = useDatos()
+  const pptos = useMemo(() => cat?.escenarios.filter(e => e.tipo === 'ppto') ?? [], [cat])
+  const [escId, setEscId] = useState<number | undefined>(
+    () => (pptos.find(e => e.estado === 'abierto') ?? pptos[0])?.id)
+  const esc = pptos.find(e => e.id === escId)
+  const escRef = cat?.escenarios.find(e => e.tipo === 'real' && esc && e.anio === esc.anio - 1)
+
+  const visibles = useMemo(
+    () => (cat?.centros ?? []).filter(c => c.activo && puedeVer(perfil, accesos, c)), [cat, perfil, accesos])
+  const [sede, setSede] = useState('')
+  const [unidad, setUnidad] = useState('')
+  const [linea, setLinea] = useState('')
+  const [hayCambios, setHayCambios] = useState(false)
+
+  if (!cat || !perfil) return null
+  if (!esc) return <div className="alerta">No hay escenarios de presupuesto creados.</div>
+
+  const opcSedes = cat.sedes.filter(s => visibles.some(c => c.sede === s.codigo))
+  const opcUnidades = cat.unidades.filter(u => visibles.some(c => c.unidad === u.codigo && (!sede || c.sede === sede)))
+  const opcLineas = cat.lineas.filter(l => visibles.some(c => c.linea === l.codigo && (!sede || c.sede === sede) && (!unidad || c.unidad === unidad)))
+  const centro = sede && unidad && linea && visibles.some(c => c.sede === sede && c.unidad === unidad && c.linea === linea)
+    ? { sede, unidad, linea } : null
+
+  const confirmarSalida = () => !hayCambios || confirm('Tiene cambios sin guardar. ¿Descartarlos?')
+  const elegir = (c: Sel) => { if (!confirmarSalida()) return; setSede(c.sede); setUnidad(c.unidad); setLinea(c.linea) }
+
+  return (
+    <div>
+      <div className="encabezado">
+        <div>
+          <h1>Carga de presupuesto</h1>
+          <p className="sub">
+            {esc.nombre} · {esc.estado === 'abierto' ? <span className="chip ok">Abierto para edición</span> : <span className="chip">Cerrado</span>}
+          </p>
+        </div>
+        <div className="filtros">
+          <label>Escenario
+            <select value={escId} onChange={e => confirmarSalida() && setEscId(Number(e.target.value))}>
+              {pptos.map(e => <option key={e.id} value={e.id}>{e.nombre}</option>)}
+            </select>
+          </label>
+          <label>Sede
+            <select value={sede} onChange={e => { if (confirmarSalida()) { setSede(e.target.value); setLinea('') } }}>
+              <option value="">— Todas —</option>
+              {opcSedes.map(s => <option key={s.codigo} value={s.codigo}>{s.nombre}</option>)}
+            </select>
+          </label>
+          <label>Unidad de negocio
+            <select value={unidad} onChange={e => { if (confirmarSalida()) { setUnidad(e.target.value); setLinea('') } }}>
+              <option value="">— Todas —</option>
+              {opcUnidades.map(u => <option key={u.codigo} value={u.codigo}>{u.nombre}</option>)}
+            </select>
+          </label>
+          <label>Línea / marca
+            <select value={linea} onChange={e => confirmarSalida() && setLinea(e.target.value)}>
+              <option value="">— Elegir —</option>
+              {opcLineas.map(l => <option key={l.codigo} value={l.codigo}>{l.nombre}</option>)}
+            </select>
+          </label>
+        </div>
+      </div>
+
+      {centro ? (
+        <Grilla key={`${esc.id}|${claveCentro(centro)}`} esc={esc} escRef={escRef} centro={centro}
+          onCambios={setHayCambios} onVolver={() => confirmarSalida() && (setLinea(''), setHayCambios(false))} />
+      ) : (
+        <ResumenCentros esc={esc} escRef={escRef} centros={visibles.filter(c => (!sede || c.sede === sede) && (!unidad || c.unidad === unidad))}
+          onElegir={elegir} />
+      )}
+    </div>
+  )
+}
+
+// =============================================================================== resumen de centros
+function ResumenCentros({ esc, escRef, centros, onElegir }: {
+  esc: Escenario; escRef?: Escenario; centros: Centro[]; onElegir: (c: Sel) => void
+}) {
+  const { perfil, accesos, cat } = useDatos()
+  const [datos, setDatos] = useState<Monto[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [importar, setImportar] = useState(false)
+  const [exportando, setExportando] = useState(false)
+
+  const cargar = useCallback(() => {
+    setDatos(null)
+    resumen([esc.id, ...(escRef ? [escRef.id] : [])]).then(setDatos).catch(e => setError(e.message))
+  }, [esc.id, escRef])
+  useEffect(cargar, [cargar])
+
+  const cuentas = useMemo(() => new Map(cat!.cuentas.map(c => [c.cuenta, c])), [cat])
+  const tot = useMemo(() => {
+    const m = new Map<string, { ing: number; gas: number; ref: number; filas: number }>()
+    for (const r of datos ?? []) {
+      const c = cuentas.get(r.cuenta)
+      if (c?.es_estadistica) continue
+      const k = claveCentro(r)
+      if (!m.has(k)) m.set(k, { ing: 0, gas: 0, ref: 0, filas: 0 })
+      const t = m.get(k)!
+      if (r.escenario_id === esc.id) {
+        if (r.monto >= 0) t.ing += Number(r.monto); else t.gas += Number(r.monto)
+        t.filas++
+      } else t.ref += Number(r.monto)
+    }
+    return m
+  }, [datos, cuentas, esc.id])
+
+  const editables = centros.filter(c => puedeEditar(perfil, accesos, esc, c))
+
+  async function descargarTodo() {
+    setExportando(true)
+    try {
+      const filas = await armarPlantillaMultiple(editables, datos ?? [], esc, escRef, cat!)
+      exportarPlantilla(filas, `PPTO_${esc.anio}_mis_centros.xlsx`, `${esc.nombre} — ${perfil?.nombre ?? ''}`)
+    } finally { setExportando(false) }
+  }
+
+  if (error) return <div className="alerta error">{error}</div>
+  const lista = [...centros].sort((a, b) =>
+    a.sede.localeCompare(b.sede) || a.unidad.localeCompare(b.unidad) || a.linea.localeCompare(b.linea))
+  const totalRes = lista.reduce((s, c) => { const t = tot.get(claveCentro(c)); return s + (t ? t.ing + t.gas : 0) }, 0)
+
+  return (
+    <div className="tarjeta">
+      <div className="barra">
+        <h3>Centros de resultado ({lista.length})</h3>
+        <span className="sub">Elija un centro para cargar su presupuesto, o trabaje todos juntos en Excel.</span>
+        <div className="espacio" />
+        {editables.length > 0 && <>
+          <button onClick={descargarTodo} disabled={!datos || exportando}>{exportando ? 'Generando…' : 'Descargar Excel (mis centros)'}</button>
+          <button className="primario" onClick={() => setImportar(true)}>Cargar Excel</button>
+        </>}
+      </div>
+      {importar && <ImportarExcel esc={esc} onCerrar={() => setImportar(false)} onCargado={cargar} />}
+      {!datos ? <p>Cargando…</p> : (
+        <div className="scroll">
+          <table className="tabla simple">
+            <thead>
+              <tr>
+                <th>Sede</th><th>Unidad</th><th>Línea / marca</th>
+                <th className="n">Ingresos ppto</th><th className="n">Costos y gastos ppto</th><th className="n">Resultado ppto</th>
+                {escRef && <th className="n">Resultado {escRef.nombre}</th>}
+                <th>Estado</th>
+              </tr>
+            </thead>
+            <tbody>
+              {lista.map(c => {
+                const t = tot.get(claveCentro(c))
+                const ed = puedeEditar(perfil, accesos, esc, c)
+                return (
+                  <tr key={claveCentro(c)} className="clic" onClick={() => onElegir(c)}>
+                    <td>{nombreDe(cat!.sedes, c.sede)}</td>
+                    <td>{nombreDe(cat!.unidades, c.unidad)}</td>
+                    <td>{nombreDe(cat!.lineas, c.linea)}</td>
+                    <td className="n">{num(t?.ing)}</td>
+                    <td className="n">{num(t?.gas)}</td>
+                    <td className="n b">{num(t ? t.ing + t.gas : 0)}</td>
+                    {escRef && <td className="n">{num(t?.ref)}</td>}
+                    <td>{t?.filas ? <span className="chip ok">Con datos</span> : <span className="chip">Vacío</span>}
+                      {ed && <span className="chip azul">Editable</span>}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+            <tfoot>
+              <tr><td colSpan={5}>Total</td><td className="n b">{num(totalRes)}</td>{escRef && <td />}<td /></tr>
+            </tfoot>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
+async function armarPlantillaMultiple(
+  centros: Centro[], datos: Monto[], esc: Escenario, escRef: Escenario | undefined,
+  cat: NonNullable<ReturnType<typeof useDatos>['cat']>,
+): Promise<FilaPlantilla[]> {
+  const cuentas = new Map(cat.cuentas.map(c => [c.cuenta, c]))
+  const resolver = crearResolverRubro(cat.mapeos, 'comercial')
+  const rubroNombre = new Map(cat.rubros.filter(r => r.vista === 'comercial').map(r => [r.codigo, r.nombre]))
+  const porCentro = new Map<string, Map<string, number[]>>()
+  const refPorUnidad = new Map<string, Set<string>>()
+  for (const r of datos) {
+    if (escRef && r.escenario_id === escRef.id) {
+      if (!refPorUnidad.has(r.unidad)) refPorUnidad.set(r.unidad, new Set())
+      refPorUnidad.get(r.unidad)!.add(r.cuenta)
+    }
+    const k = claveCentro(r)
+    if (!porCentro.has(k)) porCentro.set(k, new Map())
+    const m = porCentro.get(k)!
+    if (!m.has(r.cuenta)) m.set(r.cuenta, ceros())
+    if (r.escenario_id === esc.id) m.get(r.cuenta)![r.mes - 1] += Number(r.monto) * signoCuenta(cuentas.get(r.cuenta))
+  }
+  const filas: FilaPlantilla[] = []
+  for (const c of centros) {
+    const m = porCentro.get(claveCentro(c)) ?? new Map<string, number[]>()
+    // si el centro no tiene datos, sugerimos las cuentas usadas por su unidad de negocio el año anterior
+    let lista = [...m.keys()]
+    if (!lista.length) lista = [...(refPorUnidad.get(c.unidad) ?? [])]
+    if (!lista.length) lista = cat.cuentas.filter(x => x.activa).map(x => x.cuenta)
+    for (const cta of lista.sort()) {
+      filas.push({
+        sede: c.sede, unidad: c.unidad, linea: c.linea, cuenta: cta, nombre: cuentas.get(cta)?.nombre ?? '',
+        rubro: cuentas.get(cta)?.es_estadistica ? 'ESTADÍSTICA' : rubroNombre.get(resolver(cta, c.unidad) ?? '') ?? 'SIN CLASIFICAR',
+        valores: m.get(cta) ?? ceros(),
+      })
+    }
+  }
+  return filas
+}
+
+// =============================================================================== importación Excel
+function ImportarExcel({ esc, onCerrar, onCargado }: { esc: Escenario; onCerrar: () => void; onCargado: () => void }) {
+  const { perfil, accesos, cat } = useDatos()
+  const [estado, setEstado] = useState<{ filas: Monto[]; errores: string[]; centros: number; lineas: number } | null>(null)
+  const [progreso, setProgreso] = useState<string | null>(null)
+  const [fin, setFin] = useState<string | null>(null)
+
+  async function leer(f: File) {
+    setFin(null)
+    const { filas, errores } = await leerPlantilla(f)
+    const cuentas = new Map(cat!.cuentas.map(c => [c.cuenta, c]))
+    const centros = new Set(cat!.centros.map(claveCentro))
+    const salida: Monto[] = []
+    const usados = new Set<string>()
+    const vistos = new Set<string>()
+    filas.forEach((f, i) => {
+      const donde = `${f.sede}/${f.unidad}/${f.linea} cuenta ${f.cuenta}`
+      const k = claveCentro(f)
+      if (!centros.has(k)) { errores.push(`${donde}: el centro sede/unidad/línea no existe.`); return }
+      const c = cuentas.get(f.cuenta)
+      if (!c) { errores.push(`${donde}: la cuenta no existe en el maestro.`); return }
+      if (!puedeEditar(perfil, accesos, esc, f, f.cuenta)) { errores.push(`${donde}: no tiene permiso para editar.`); return }
+      const dup = `${k}|${f.cuenta}`
+      if (vistos.has(dup)) { errores.push(`${donde}: fila repetida (fila ${i + 1}), se sumará.`) }
+      vistos.add(dup)
+      usados.add(k)
+      f.valores.forEach((v, m) => salida.push({
+        escenario_id: esc.id, anio: esc.anio, mes: m + 1, sede: f.sede, unidad: f.unidad, linea: f.linea,
+        cuenta: f.cuenta, monto: Math.round(v * signoCuenta(c) * 100) / 100,
+      }))
+    })
+    // consolidar repetidos
+    const agg = new Map<string, Monto>()
+    for (const r of salida) {
+      const k = `${claveCentro(r)}|${r.cuenta}|${r.mes}`
+      if (agg.has(k)) agg.get(k)!.monto += r.monto; else agg.set(k, { ...r })
+    }
+    setEstado({ filas: [...agg.values()], errores, centros: usados.size, lineas: vistos.size })
+  }
+
+  async function cargar() {
+    if (!estado) return
+    try {
+      setProgreso('0')
+      await upsertEnLotes('ppto_montos', estado.filas, { onConflict: 'escenario_id,anio,mes,sede,unidad,linea,cuenta' },
+        n => setProgreso(`${n} / ${estado.filas.length}`))
+      setFin(`Carga completa: ${estado.lineas} cuentas en ${estado.centros} centro(s).`)
+      setEstado(null)
+      onCargado()
+    } catch (e) {
+      setFin(`Error al guardar: ${(e as Error).message}`)
+    } finally { setProgreso(null) }
+  }
+
+  return (
+    <div className="panel">
+      <div className="barra">
+        <h3>Cargar presupuesto desde Excel</h3>
+        <div className="espacio" />
+        <button className="link" onClick={onCerrar}>Cerrar</button>
+      </div>
+      <p className="sub">Use la plantilla descargada desde aquí. Los importes van en positivo según la naturaleza de la cuenta;
+        las filas del archivo reemplazan los 12 meses de esa cuenta en ese centro.</p>
+      <input type="file" accept=".xlsx,.xls" onChange={e => e.target.files?.[0] && leer(e.target.files[0])} />
+      {estado && (
+        <div style={{ marginTop: 12 }}>
+          <p><strong>{estado.lineas}</strong> cuentas válidas en <strong>{estado.centros}</strong> centro(s) ·{' '}
+            {estado.errores.length} observación(es).</p>
+          {estado.errores.length > 0 && (
+            <div className="alerta error lista">
+              {estado.errores.slice(0, 50).map((e, i) => <div key={i}>{e}</div>)}
+              {estado.errores.length > 50 && <div>… y {estado.errores.length - 50} más</div>}
+            </div>
+          )}
+          <button className="primario" disabled={!estado.filas.length || progreso != null} onClick={cargar}>
+            {progreso != null ? `Guardando ${progreso}…` : `Cargar ${estado.lineas} cuentas`}
+          </button>
+        </div>
+      )}
+      {fin && <div className={`alerta ${fin.startsWith('Error') ? 'error' : 'ok'}`}>{fin}</div>}
+    </div>
+  )
+}
+
+// =============================================================================== grilla de un centro
+function Grilla({ esc, escRef, centro: centroProp, onCambios, onVolver }: {
+  esc: Escenario; escRef?: Escenario; centro: Sel; onCambios: (b: boolean) => void; onVolver: () => void
+}) {
+  const { perfil, accesos, cat } = useDatos()
+  // el padre crea un objeto nuevo en cada render; la grilla se monta por centro (key), así que lo fijamos
+  const [centro] = useState(centroProp)
+  const [vista, setVista] = useState<Vista>('comercial')
+  const [todas, setTodas] = useState(false)
+  const [valores, setValores] = useState<Valores | null>(null)
+  const [originales, setOriginales] = useState<Valores>(new Map())
+  const [ref, setRef] = useState<Valores>(new Map())
+  const [agregadas, setAgregadas] = useState<Set<string>>(new Set())
+  const [msg, setMsg] = useState<{ tipo: string; texto: string } | null>(null)
+  const [guardando, setGuardando] = useState(false)
+  const [importar, setImportar] = useState(false)
+  const [buscar, setBuscar] = useState('')
+
+  const cuentas = useMemo(() => new Map(cat!.cuentas.map(c => [c.cuenta, c])), [cat])
+  const editable = puedeEditar(perfil, accesos, esc, centro)
+  const puedeCuenta = useCallback((cta: string) => puedeEditar(perfil, accesos, esc, centro, cta), [perfil, accesos, esc, centro])
+
+  const aValores = useCallback((filas: Monto[]) => {
+    const m: Valores = new Map()
+    for (const r of filas) {
+      if (!m.has(r.cuenta)) m.set(r.cuenta, ceros())
+      m.get(r.cuenta)![r.mes - 1] += Number(r.monto) * signoCuenta(cuentas.get(r.cuenta))
+    }
+    return m
+  }, [cuentas])
+
+  const cargar = useCallback(async () => {
+    setValores(null)
+    const [p, r] = await Promise.all([
+      montosCentro('ppto_montos', esc.id, centro),
+      escRef ? montosCentro('real_montos', escRef.id, centro) : Promise.resolve([] as Monto[]),
+    ])
+    const v = aValores(p)
+    setOriginales(new Map([...v].map(([k, a]) => [k, [...a]])))
+    setValores(v)
+    setRef(aValores(r))
+  }, [esc.id, escRef, centro, aValores])
+  useEffect(() => { cargar().catch(e => setMsg({ tipo: 'error', texto: e.message })) }, [cargar])
+
+  // ---- cambios pendientes
+  const cambios = useMemo(() => {
+    const out: { cuenta: string; mes: number; valor: number }[] = []
+    if (!valores) return out
+    for (const [cta, arr] of valores) {
+      const o = originales.get(cta) ?? ceros()
+      arr.forEach((v, i) => { if (Math.abs(v - o[i]) > 0.004) out.push({ cuenta: cta, mes: i + 1, valor: v }) })
+    }
+    return out
+  }, [valores, originales])
+  useEffect(() => { onCambios(cambios.length > 0) }, [cambios.length, onCambios])
+  useEffect(() => {
+    if (!cambios.length) return
+    const h = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = '' }
+    window.addEventListener('beforeunload', h)
+    return () => window.removeEventListener('beforeunload', h)
+  }, [cambios.length])
+
+  // ---- estructura de filas
+  const resolver = useMemo(() => crearResolverRubro(cat!.mapeos, vista), [cat, vista])
+  const cuentasPorRubro = useMemo(() => {
+    const m = new Map<string, string[]>()
+    for (const c of cat!.cuentas) {
+      if (!c.activa || c.es_estadistica) continue
+      const r = resolver(c.cuenta, centro.unidad) ?? '__SIN'
+      if (!m.has(r)) m.set(r, [])
+      m.get(r)!.push(c.cuenta)
+    }
+    return m
+  }, [cat, resolver, centro.unidad])
+
+  const conDatos = (cta: string) =>
+    (valores?.get(cta)?.some(v => v !== 0) ?? false) || (ref.get(cta)?.some(v => v !== 0) ?? false) ||
+    (originales.get(cta)?.some(v => v !== 0) ?? false) || agregadas.has(cta)
+  const sinDatos = !!valores && ![...cuentas.keys()].some(conDatos)
+  const mostrarTodas = todas || sinDatos
+
+  const reporte = useMemo(() => {
+    if (!valores) return null
+    const entradas = [...new Set([...valores.keys(), ...ref.keys()])].map(cta => {
+      const s = signoCuenta(cuentas.get(cta))
+      const v = valores.get(cta) ?? ceros()
+      return { cuenta: cta, unidad: centro.unidad, valores: [...v.map(x => x * s), suma(ref.get(cta) ?? []) * s] }
+    })
+    return construirReporte({ rubros: cat!.rubros, vista, resolver, cuentas, entradas, columnas: 13, conCuentas: false })
+  }, [valores, ref, cuentas, cat, vista, resolver, centro.unidad])
+
+  // filas editables en orden de pantalla (para navegación con teclado y pegado)
+  const filtro = buscar.trim().toLowerCase()
+  const pasaFiltro = (cta: string) => !filtro || cta.includes(filtro) || (cuentas.get(cta)?.nombre.toLowerCase().includes(filtro) ?? false)
+  const orden: { tipo: 'rubro' | 'cuenta'; fila?: FilaReporte; cuenta?: string }[] = []
+  const editables: string[] = []
+  const volumen = [...cuentas.values()].filter(c => c.es_estadistica)
+  for (const c of volumen) editables.push(c.cuenta)
+  if (reporte) {
+    for (const f of reporte.filas) {
+      const lista = (cuentasPorRubro.get(f.rubro ?? '') ?? []).filter(c => (mostrarTodas || conDatos(c)) && pasaFiltro(c))
+      if (f.tipo === 'detalle' && !lista.length && !f.valores.some(v => Math.abs(v) > 0.5) && !mostrarTodas) continue
+      if (filtro && f.tipo === 'detalle' && !lista.length) continue
+      orden.push({ tipo: 'rubro', fila: f })
+      if (f.tipo === 'detalle' || f.tipo === 'sin') for (const c of lista) { orden.push({ tipo: 'cuenta', cuenta: c }); editables.push(c) }
+    }
+    if (!reporte.filas.some(f => f.tipo === 'sin')) {
+      const sinMapa = (cuentasPorRubro.get('__SIN') ?? []).filter(c => (mostrarTodas || conDatos(c)) && pasaFiltro(c))
+      for (const c of sinMapa) { orden.push({ tipo: 'cuenta', cuenta: c }); editables.push(c) }
+    }
+  }
+  const editablesRef = useRef(editables)
+  editablesRef.current = editables
+  const refRef = useRef(ref)
+  refRef.current = ref
+
+  // ---- edición
+  const fijar = useCallback((fila: number, col: number, n: number) => {
+    const cta = editablesRef.current[fila]
+    if (!cta) return
+    setValores(prev => {
+      const m = new Map(prev!)
+      const arr = [...(m.get(cta) ?? ceros())]
+      if (col < 12) arr[col] = n
+      else {
+        // distribuir el total anual según la estacionalidad del año anterior (o en partes iguales)
+        const base = (refRef.current.get(cta) ?? ceros()).map(Math.abs)
+        const sb = suma(base)
+        let acum = 0
+        for (let i = 0; i < 12; i++) {
+          arr[i] = i < 11 ? Math.round((sb ? n * base[i] / sb : n / 12) * 100) / 100 : Math.round((n - acum) * 100) / 100
+          acum += arr[i]
+        }
+      }
+      m.set(cta, arr)
+      return m
+    })
+  }, [])
+
+  const pegar = useCallback((fila: number, col: number, texto: string) => {
+    const filas = texto.replace(/\r/g, '').split('\n').filter((l, i, a) => l !== '' || i < a.length - 1)
+    setValores(prev => {
+      const m = new Map(prev!)
+      filas.forEach((linea, i) => {
+        const cta = editablesRef.current[fila + i]
+        if (!cta) return
+        const arr = [...(m.get(cta) ?? ceros())]
+        linea.split('\t').forEach((t, j) => {
+          const c = col + j
+          if (c > 11) return
+          const n = parseNumero(t)
+          if (n != null) arr[c] = n
+        })
+        m.set(cta, arr)
+      })
+      return m
+    })
+  }, [])
+
+  async function guardar() {
+    if (!cambios.length) return
+    setGuardando(true)
+    setMsg(null)
+    try {
+      const filas = cambios.map(c => ({
+        escenario_id: esc.id, anio: esc.anio, mes: c.mes, ...centro, cuenta: c.cuenta,
+        monto: Math.round(c.valor * signoCuenta(cuentas.get(c.cuenta)) * 100) / 100,
+      }))
+      await upsertEnLotes('ppto_montos', filas, { onConflict: 'escenario_id,anio,mes,sede,unidad,linea,cuenta' })
+      setOriginales(new Map([...valores!].map(([k, a]) => [k, [...a]])))
+      setMsg({ tipo: 'ok', texto: `Guardado: ${filas.length} celda(s).` })
+    } catch (e) {
+      setMsg({ tipo: 'error', texto: `No se pudo guardar: ${(e as Error).message}` })
+    } finally { setGuardando(false) }
+  }
+
+  function copiarReal() {
+    if (!escRef) return
+    const t = prompt(`Copiar ${escRef.nombre} como base. Variación % a aplicar (ej. 5 o -3):`, '0')
+    if (t == null) return
+    const p = parseNumero(t)
+    if (p == null) return
+    setValores(prev => {
+      const m = new Map(prev!)
+      for (const [cta, arr] of ref) {
+        if (!puedeCuenta(cta) || cuentas.get(cta)?.es_estadistica) continue
+        m.set(cta, arr.map(v => Math.round(v * (1 + p / 100) * 100) / 100))
+      }
+      return m
+    })
+  }
+
+  function descargar() {
+    const filas: FilaPlantilla[] = editables.map(cta => ({
+      ...centro, cuenta: cta, nombre: cuentas.get(cta)?.nombre ?? '',
+      rubro: cat!.rubros.find(r => r.vista === 'comercial' && r.codigo === crearResolverRubro(cat!.mapeos, 'comercial')(cta, centro.unidad))?.nombre ?? '',
+      valores: valores?.get(cta) ?? ceros(),
+    }))
+    exportarPlantilla(filas, `PPTO_${esc.anio}_${centro.sede}_${centro.unidad}_${centro.linea}.xlsx`,
+      `${esc.nombre} — ${nombreDe(cat!.sedes, centro.sede)} / ${nombreDe(cat!.unidades, centro.unidad)} / ${nombreDe(cat!.lineas, centro.linea)}`)
+  }
+
+  const [nuevaCuenta, setNuevaCuenta] = useState('')
+  function agregarCuenta() {
+    const cta = nuevaCuenta.split(' ')[0]
+    if (!cuentas.has(cta)) return
+    setAgregadas(s => new Set(s).add(cta))
+    setNuevaCuenta('')
+  }
+
+  if (!valores) return <div className="tarjeta">Cargando presupuesto…{msg && <div className="alerta error">{msg.texto}</div>}</div>
+
+  const totalFinal = reporte?.filas.filter(f => f.tipo === 'total').at(-1)
+  const anioRef = escRef?.anio ?? esc.anio - 1
+
+  return (
+    <div className="tarjeta">
+      <div className="barra">
+        <button className="link" onClick={onVolver}>← Todos los centros</button>
+        <h3>{nombreDe(cat!.sedes, centro.sede)} · {nombreDe(cat!.unidades, centro.unidad)} · {nombreDe(cat!.lineas, centro.linea)}</h3>
+        {!editable && <span className="chip">Solo lectura</span>}
+        <div className="espacio" />
+        <div className="segmentado">
+          <button className={vista === 'comercial' ? 'activo' : ''} onClick={() => setVista('comercial')}>Vista comercial</button>
+          <button className={vista === 'contable' ? 'activo' : ''} onClick={() => setVista('contable')}>Vista contable</button>
+        </div>
+      </div>
+
+      <div className="barra herramientas">
+        <label className="check"><input type="checkbox" checked={mostrarTodas} disabled={sinDatos} onChange={e => setTodas(e.target.checked)} /> Mostrar todas las cuentas</label>
+        <input className="buscar" placeholder="Buscar cuenta…" value={buscar} onChange={e => setBuscar(e.target.value)} />
+        {editable && <>
+          <input list="lista-cuentas" className="buscar" placeholder="Agregar cuenta…" value={nuevaCuenta}
+            onChange={e => setNuevaCuenta(e.target.value)} onKeyDown={e => e.key === 'Enter' && agregarCuenta()} />
+          <datalist id="lista-cuentas">
+            {cat!.cuentas.filter(c => c.activa && !c.es_estadistica).map(c => <option key={c.cuenta} value={`${c.cuenta} ${c.nombre}`} />)}
+          </datalist>
+          <button onClick={agregarCuenta} disabled={!cuentas.has(nuevaCuenta.split(' ')[0])}>Agregar</button>
+        </>}
+        <div className="espacio" />
+        {editable && escRef && <button onClick={copiarReal}>Copiar real {anioRef} + %</button>}
+        <button onClick={descargar}>Descargar Excel</button>
+        {editable && <button onClick={() => setImportar(v => !v)}>Cargar Excel</button>}
+        {editable && <button className="primario" disabled={!cambios.length || guardando} onClick={guardar}>
+          {guardando ? 'Guardando…' : cambios.length ? `Guardar (${cambios.length})` : 'Guardado'}
+        </button>}
+      </div>
+      {importar && <ImportarExcel esc={esc} onCerrar={() => setImportar(false)} onCargado={() => { setImportar(false); cargar() }} />}
+      {msg && <div className={`alerta ${msg.tipo}`}>{msg.texto}</div>}
+      <p className="ayuda">
+        Las cuentas se ingresan en <strong>positivo</strong> (ingresos y gastos); los subtotales muestran el resultado con signo (gastos entre paréntesis).
+        Puede pegar bloques copiados de Excel. Escriba en la columna <em>Total</em> para repartir el año según la estacionalidad de {anioRef}.
+      </p>
+
+      <div className="scroll grilla-cont">
+        <table className="tabla grilla">
+          <thead>
+            <tr>
+              <th className="fija">Cuenta / rubro</th>
+              {MESES.map(m => <th key={m} className="n">{m}</th>)}
+              <th className="n">Total {esc.anio}</th>
+              <th className="n">Real {anioRef}</th>
+              <th className="n">Var %</th>
+            </tr>
+          </thead>
+          <tbody>
+            {volumen.map(c => {
+              const v = valores.get(c.cuenta) ?? ceros()
+              const r = suma(ref.get(c.cuenta) ?? [])
+              const fila = editables.indexOf(c.cuenta)
+              return (
+                <tr key={c.cuenta} className="fila-vol">
+                  <td className="fija">{c.nombre}</td>
+                  {v.map((x, i) => <td key={i}><Celda valor={x} editable={editable} fila={fila} col={i} onFijar={fijar} onPegar={pegar} /></td>)}
+                  <td><Celda valor={suma(v)} editable={editable} fila={fila} col={12} onFijar={fijar} onPegar={pegar} total /></td>
+                  <td className="n">{num(r)}</td>
+                  <td className="n">{r ? pct(suma(v) / r - 1) : ''}</td>
+                </tr>
+              )
+            })}
+            {orden.map((o, idx) => {
+              if (o.tipo === 'rubro') {
+                const f = o.fila!
+                const tot = suma(f.valores.slice(0, 12)), r = f.valores[12]
+                return (
+                  <tr key={`r${idx}`} className={`fila-${f.tipo}`}>
+                    <td className="fija">{f.nombre}</td>
+                    {f.valores.slice(0, 12).map((x, i) => <td key={i} className="n">{num(x)}</td>)}
+                    <td className="n b">{num(tot)}</td>
+                    <td className="n">{num(r)}</td>
+                    <td className="n">{r ? pct(tot / r - 1) : ''}</td>
+                  </tr>
+                )
+              }
+              const cta = o.cuenta!
+              const v = valores.get(cta) ?? ceros()
+              const r = suma(ref.get(cta) ?? [])
+              const fila = editables.indexOf(cta)
+              const ed = editable && puedeCuenta(cta)
+              const sucia = v.some((x, i) => Math.abs(x - (originales.get(cta)?.[i] ?? 0)) > 0.004)
+              return (
+                <tr key={`c${cta}`} className={`fila-cuenta${sucia ? ' sucia' : ''}`}>
+                  <td className="fija" title={cta}><span className="cod">{cta}</span> {cuentas.get(cta)?.nombre}</td>
+                  {v.map((x, i) => <td key={i}><Celda valor={x} editable={ed} fila={fila} col={i} onFijar={fijar} onPegar={pegar} /></td>)}
+                  <td><Celda valor={suma(v)} editable={ed} fila={fila} col={12} onFijar={fijar} onPegar={pegar} total /></td>
+                  <td className="n">{num(r)}</td>
+                  <td className="n">{r ? pct(suma(v) / r - 1) : ''}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+          {totalFinal && (
+            <tfoot>
+              <tr>
+                <td className="fija">{totalFinal.nombre}</td>
+                {totalFinal.valores.slice(0, 12).map((x, i) => <td key={i} className="n">{num(x)}</td>)}
+                <td className="n b">{num(suma(totalFinal.valores.slice(0, 12)))}</td>
+                <td className="n">{num(totalFinal.valores[12])}</td>
+                <td />
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </div>
+    </div>
+  )
+}
+
+// =============================================================================== celda editable
+const Celda = memo(function Celda({ valor, editable, fila, col, onFijar, onPegar, total }: {
+  valor: number; editable: boolean; fila: number; col: number; total?: boolean
+  onFijar: (fila: number, col: number, n: number) => void
+  onPegar: (fila: number, col: number, texto: string) => void
+}) {
+  const [txt, setTxt] = useState<string | null>(null)
+  const cancelado = useRef(false)
+  const recienEnfocado = useRef(false)
+  const mover = (f: number, c: number) => {
+    const el = document.querySelector<HTMLInputElement>(`input[data-f="${f}"][data-c="${c}"]`)
+    el?.focus()
+  }
+  if (!editable) return <span className={`n celda-ro${total ? ' b' : ''}`}>{num(valor)}</span>
+  return (
+    <input
+      className={`celda${total ? ' total' : ''}`}
+      data-f={fila} data-c={col}
+      value={txt ?? num(valor).replace('–', '')}
+      onFocus={e => {
+        cancelado.current = false
+        recienEnfocado.current = true
+        const t = e.target
+        t.value = valor ? String(Math.round(valor * 100) / 100) : ''
+        t.select()
+        setTxt(t.value)
+      }}
+      // el clic que da el foco no debe quitar la selección: lo escrito reemplaza el valor
+      onMouseUp={e => { if (recienEnfocado.current) { e.preventDefault(); recienEnfocado.current = false } }}
+      onChange={e => { recienEnfocado.current = false; setTxt(e.target.value) }}
+      onBlur={() => {
+        if (txt != null && !cancelado.current) {
+          const n = parseNumero(txt)
+          if (n != null && Math.abs(n - valor) > 0.004) onFijar(fila, col, n)
+        }
+        setTxt(null)
+      }}
+      onKeyDown={e => {
+        if (e.key === 'Enter' || e.key === 'ArrowDown') { e.preventDefault(); mover(fila + 1, col) }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); mover(fila - 1, col) }
+        else if (e.key === 'Escape') { cancelado.current = true; (e.target as HTMLInputElement).blur() }
+      }}
+      onPaste={e => {
+        const t = e.clipboardData.getData('text')
+        if (t.includes('\t') || t.trim().includes('\n')) { e.preventDefault(); setTxt(null); onPegar(fila, col, t) }
+      }}
+    />
+  )
+})
