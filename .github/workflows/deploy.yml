@@ -26,7 +26,8 @@ jobs:
       - run: npm ci
       - run: npm run build
         env:
-          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          # la URL del proyecto no es secreta; el secreto, si existe, tiene prioridad
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || 'https://tbjhilyaihzpkrignfkk.supabase.co' }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
       - uses: actions/upload-pages-artifact@v3
         with:
