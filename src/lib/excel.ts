@@ -83,6 +83,80 @@ export async function leerPlantilla(archivo: File): Promise<LecturaPlantilla> {
   return { filas, errores }
 }
 
+// ------------------------------------------------------------------ extra libros
+export interface FilaExtra {
+  sede: string
+  unidad: string
+  linea: string
+  cuenta: string
+  descripcion: string
+  valores: number[] // 12 meses, signo de resultado (ingresos +, gastos −)
+}
+
+const MESES_EXCEL = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Setiembre', 'Octubre', 'Noviembre', 'Diciembre']
+
+/** Descarga el registro extra libros con el mismo formato del "Modelo Registro Extra Libros". */
+export function exportarExtraLibros(filas: FilaExtra[], archivo: string, titulo: string) {
+  const aoa: (string | number | null)[][] = [
+    ['Llenado Información Extra Libros'],
+    [titulo],
+    ['Importes con signo de resultado: ingresos en positivo, costos y gastos en negativo. Use los códigos de sede, unidad y línea de SAP.'],
+    [],
+    [],
+    ['Sede', 'Unidad de negocio', 'Linea', 'Cuenta', 'Descripcion', ...MESES_EXCEL, 'Total'],
+  ]
+  for (const f of filas) {
+    aoa.push([f.sede, f.unidad, f.linea, f.cuenta, f.descripcion, ...f.valores.map(v => (v ? Math.round(v * 100) / 100 : null)), null])
+  }
+  const ws = XLSX.utils.aoa_to_sheet(aoa)
+  filas.forEach((_, i) => {
+    const r = i + 7
+    ws[XLSX.utils.encode_cell({ r: r - 1, c: 17 })] = { t: 'n', f: `SUM(F${r}:Q${r})` }
+  })
+  ws['!cols'] = [{ wch: 6 }, { wch: 10 }, { wch: 11 }, { wch: 10 }, { wch: 40 }, ...MESES_EXCEL.map(() => ({ wch: 12 })), { wch: 14 }]
+  ws['!autofilter'] = { ref: `A6:R${filas.length + 6}` }
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, ws, 'Hoja de LLenado')
+  XLSX.writeFile(wb, archivo)
+}
+
+/** Lee un archivo con el formato del modelo extra libros (o la descarga de la app). */
+export async function leerExtraLibros(archivo: File): Promise<{ filas: FilaExtra[]; errores: string[] }> {
+  const wb = XLSX.read(await archivo.arrayBuffer(), { type: 'array' })
+  const ws = wb.Sheets['Hoja de LLenado'] ?? wb.Sheets[wb.SheetNames.find(n => norm(n).includes('LLENADO')) ?? wb.SheetNames[0]]
+  const aoa = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, raw: true, defval: null })
+  const iCab = aoa.findIndex(r => r.some(c => norm(c) === 'CUENTA') && r.some(c => norm(c) === 'SEDE'))
+  if (iCab < 0) return { filas: [], errores: ['No se encontró la cabecera (Sede, Unidad de negocio, Linea, Cuenta, Descripcion, Enero…Diciembre).'] }
+  const cab = aoa[iCab].map(norm)
+  const buscar = (...ns: string[]) => cab.findIndex(c => ns.includes(c))
+  const cSede = buscar('SEDE'), cUni = buscar('UNIDAD DE NEGOCIO', 'UNIDAD', 'UN'), cLin = buscar('LINEA', 'MARCA')
+  const cCta = buscar('CUENTA'), cDes = buscar('DESCRIPCION', 'NOMBRE CUENTA', 'NOMBRE')
+  const cMes = MESES_EXCEL.map((m, i) => buscar(norm(m), norm(MESES[i]), ...(i === 8 ? ['SEPTIEMBRE', 'SEP'] : [])))
+  const errores: string[] = []
+  if ([cSede, cUni, cLin, cCta].some(x => x < 0)) errores.push('Faltan columnas obligatorias: Sede, Unidad de negocio, Linea, Cuenta.')
+  if (cMes.some(x => x < 0)) errores.push('Faltan columnas de meses (Enero … Diciembre).')
+  if (errores.length) return { filas: [], errores }
+  const filas: FilaExtra[] = []
+  for (let i = iCab + 1; i < aoa.length; i++) {
+    const r = aoa[i]
+    if (!r || r.every(c => c == null || c === '')) continue
+    const cuenta = String(r[cCta] ?? '').trim()
+    if (!cuenta) continue
+    const valores = cMes.map(c => {
+      const v = r[c]
+      if (v == null || v === '') return 0
+      const n = typeof v === 'number' ? v : Number(String(v).replace(/,/g, ''))
+      if (!isFinite(n)) { errores.push(`Fila ${i + 1}: valor no numérico "${v}"`); return 0 }
+      return n
+    })
+    filas.push({
+      sede: norm(r[cSede]), unidad: norm(r[cUni]), linea: String(r[cLin] ?? '').trim(), cuenta,
+      descripcion: cDes >= 0 ? String(r[cDes] ?? '') : '', valores,
+    })
+  }
+  return { filas, errores }
+}
+
 /** Lee una hoja genérica como lista de objetos usando la primera fila con datos como cabecera. */
 export async function leerTabla(archivo: File): Promise<Record<string, unknown>[]> {
   const wb = XLSX.read(await archivo.arrayBuffer(), { type: 'array', cellDates: true })

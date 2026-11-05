@@ -6,6 +6,7 @@ import Inicio from './pages/Inicio'
 import Presupuesto from './pages/Presupuesto'
 import Reportes from './pages/Reportes'
 import Ajustes from './pages/Ajustes'
+import ExtraLibros from './pages/ExtraLibros'
 import CargaReal from './pages/CargaReal'
 import Mapeos from './pages/Mapeos'
 import Usuarios from './pages/Usuarios'
@@ -59,6 +60,7 @@ export default function App() {
           <NavLink to="/presupuesto">Carga de presupuesto</NavLink>
           <NavLink to="/reportes">Estados de resultados</NavLink>
           {contab && <div className="nav-titulo">Contabilidad</div>}
+          {contab && <NavLink to="/extra-libros">Registro extra libros</NavLink>}
           {contab && <NavLink to="/ajustes">Ajustes y provisiones</NavLink>}
           {contab && <NavLink to="/carga-real">Carga real (SAP)</NavLink>}
           {contab && <NavLink to="/mapeos">Mapeo de cuentas</NavLink>}
@@ -76,6 +78,7 @@ export default function App() {
           <Route path="/" element={<Inicio />} />
           <Route path="/presupuesto" element={<Presupuesto />} />
           <Route path="/reportes" element={<Reportes />} />
+          {contab && <Route path="/extra-libros" element={<ExtraLibros />} />}
           {contab && <Route path="/ajustes" element={<Ajustes />} />}
           {contab && <Route path="/carga-real" element={<CargaReal />} />}
           {contab && <Route path="/mapeos" element={<Mapeos />} />}

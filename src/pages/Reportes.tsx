@@ -27,6 +27,18 @@ export default function Reportes() {
   const [linea, setLinea] = useState('')
   const [verCuentas, setVerCuentas] = useState(false)
   const [miles, setMiles] = useState(false)
+  // secciones / rubros plegados (se recuerda en este navegador)
+  const [plegados, setPlegados] = useState<Set<string>>(() => {
+    try { return new Set(JSON.parse(localStorage.getItem('eerr-plegados') ?? '[]') as string[]) } catch { return new Set() }
+  })
+  useEffect(() => {
+    try { localStorage.setItem('eerr-plegados', JSON.stringify([...plegados])) } catch { /* sin almacenamiento */ }
+  }, [plegados])
+  const alternar = (clave: string) => setPlegados(p => {
+    const n = new Set(p)
+    if (n.has(clave)) n.delete(clave); else n.add(clave)
+    return n
+  })
   const [datos, setDatos] = useState<Monto[] | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -120,6 +132,18 @@ export default function Reportes() {
 
   const fmt = (x: number, i: number) => (modo !== 'mensual' && i === 3 ? pct(x) : num(x, miles))
 
+  // agrupación: cada fila de detalle/cuenta cuelga de su sección; cada cuenta, de su rubro de detalle
+  let seccionActual = '', detalleActual = ''
+  const filasVista = (rep?.filas ?? []).map(f => {
+    if (f.tipo === 'seccion') { seccionActual = f.clave; detalleActual = '' }
+    else if (f.tipo === 'total') { seccionActual = ''; detalleActual = '' }
+    else if (f.tipo === 'detalle' || f.tipo === 'sin') detalleActual = f.clave
+    const padres = f.tipo === 'detalle' ? [seccionActual] : f.tipo === 'cuenta' ? [seccionActual, detalleActual] : []
+    return { f, padres: padres.filter(Boolean) }
+  })
+  const conHijos = new Set(filasVista.flatMap(x => x.padres))
+  const plegables = [...conHijos].filter(c => rep?.filas.some(f => f.clave === c && f.tipo === 'seccion'))
+
   return (
     <div>
       <div className="encabezado">
@@ -205,6 +229,10 @@ export default function Reportes() {
               ? <span className="chip ok">✓ Cuadra con la vista {vista === 'contable' ? 'comercial' : 'contable'}</span>
               : <span className="chip error">✗ No cuadra con la vista {vista === 'contable' ? 'comercial' : 'contable'}: revisar mapeo de cuentas</span>}
             {rep.sinClasificar.some(x => Math.abs(x) > 0.5) && <span className="chip error">Hay cuentas sin clasificar</span>}
+            <span className="agrupar">
+              <button className="chico" onClick={() => setPlegados(new Set(plegables))}>Agrupar todo</button>
+              <button className="chico" onClick={() => setPlegados(new Set())}>Expandir todo</button>
+            </span>
           </div>
           <div className="scroll">
             <table className="tabla reporte">
@@ -222,14 +250,22 @@ export default function Reportes() {
                       .map((x, i) => <td key={i} className="n">{modo !== 'mensual' && i === 3 ? pct(x) : num(x)}</td>)}
                   </tr>
                 )}
-                {rep.filas.map(f => (
-                  <tr key={f.clave} className={`fila-${f.tipo}`}>
-                    <td className="fija">{f.tipo === 'cuenta' && <span className="cod">{f.cuenta}</span>} {f.nombre}</td>
+                {filasVista.filter(({ padres }) => !padres.some(p => plegados.has(p))).map(({ f }) => {
+                  const plegable = conHijos.has(f.clave)
+                  const cerrado = plegados.has(f.clave)
+                  return (
+                  <tr key={f.clave} className={`fila-${f.tipo}${plegable ? ' plegable' : ''}`}
+                    onClick={plegable ? () => alternar(f.clave) : undefined} title={plegable ? (cerrado ? 'Clic para desplegar' : 'Clic para agrupar') : undefined}>
+                    <td className="fija">
+                      {plegable ? <span className="flecha">{cerrado ? '▸' : '▾'}</span> : (f.tipo === 'seccion' || f.tipo === 'total') && <span className="flecha" />}
+                      {f.tipo === 'cuenta' && <span className="cod">{f.cuenta}</span>} {f.nombre}
+                    </td>
                     {valoresFila(f.valores).map((x, i) => (
                       <td key={i} className={`n${modo !== 'mensual' && i >= 2 ? (x < 0 ? ' neg' : x > 0 ? ' pos' : '') : ''}`}>{fmt(x, i)}</td>
                     ))}
                   </tr>
-                ))}
+                  )
+                })}
               </tbody>
             </table>
           </div>
