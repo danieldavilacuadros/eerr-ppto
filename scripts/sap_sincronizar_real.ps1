@@ -1,4 +1,4 @@
-# EERR y PPTO · Sincroniza el REAL desde SAP Business One (sólo lectura) a la plataforma (Supabase).
+﻿# EERR y PPTO · Sincroniza el REAL desde SAP Business One (sólo lectura) a la plataforma (Supabase).
 #
 # Usos (desde la carpeta del proyecto, con la VPN conectada):
 #   1) Guardar una vez la credencial de la plataforma (su correo y clave; se guarda cifrada para este usuario de Windows):
@@ -54,14 +54,14 @@ $cp = Import-Clixml $CRED_PLAT
 $cuerpo = @{ email = $cp.UserName; password = $cp.GetNetworkCredential().Password } | ConvertTo-Json
 $token = (Invoke-RestMethod -Method Post -Uri "$URL/auth/v1/token?grant_type=password" -Headers @{ apikey = $KEY } -ContentType 'application/json' -Body $cuerpo).access_token
 $cuerpo = $null
-$H = @{ apikey = $KEY; Authorization = "Bearer $token" }
+$HDR = @{ apikey = $KEY; Authorization = "Bearer $token" }
 function Api($metodo, $ruta, $datos = $null, $extra = @{}) {
-  $h = $H.Clone(); foreach ($k in $extra.Keys) { $h[$k] = $extra[$k] }
+  $hd = $HDR.Clone(); foreach ($k in $extra.Keys) { $hd[$k] = $extra[$k] }
   if ($null -ne $datos) {
     $json = ConvertTo-Json @($datos) -Depth 4 -Compress
-    return Invoke-RestMethod -Method $metodo -Uri "$URL/rest/v1/$ruta" -Headers $h -ContentType 'application/json; charset=utf-8' -Body ([Text.Encoding]::UTF8.GetBytes($json))
+    return Invoke-RestMethod -Method $metodo -Uri "$URL/rest/v1/$ruta" -Headers $hd -ContentType 'application/json; charset=utf-8' -Body ([Text.Encoding]::UTF8.GetBytes($json))
   }
-  return Invoke-RestMethod -Method $metodo -Uri "$URL/rest/v1/$ruta" -Headers $h
+  return Invoke-RestMethod -Method $metodo -Uri "$URL/rest/v1/$ruta" -Headers $hd
 }
 
 # ------------------------------------------------------------------ lectura SAP de un mes
@@ -95,7 +95,7 @@ HAVING ABS(SUM(J.Credit - J.Debit)) >= 0.005
     if (-not $u) { $u = 'GEN' } elseif ($u -eq 'PLYP') { $u = 'REP' }
     if (-not $l) { $l = 'GENERAL' } elseif ($l -eq 'PREMIUN') { $l = 'VOLVO' }
     $k = "$se|$u|$l|$($r.Cuenta)"
-    if (-not $agr.ContainsKey($k)) { $agr[$k] = @{ sede = $se; unidad = $u; linea = $l; cuenta = "$($r.Cuenta)"; nombre = "$($r.Nombre)".Trim(); monto = 0.0 } }
+    if (-not $agr.ContainsKey($k)) { $agr[$k] = [pscustomobject]@{ sede = $se; unidad = $u; linea = $l; cuenta = "$($r.Cuenta)"; nombre = "$($r.Nombre)".Trim(); monto = 0.0 } }
     $agr[$k].monto += [double]$r.Importe
   }
   return @{ base = $base; filas = @($agr.Values | Where-Object { [math]::Abs($_.monto) -ge 0.005 }) }
@@ -131,7 +131,8 @@ function CargarMes([int]$anio, [int]$mes) {
 
 # ------------------------------------------------------------------ ejecución
 if ($Pedidos) {
-  $pend = @(Api Get 'sap_pedidos?estado=eq.pendiente&order=pedido_en.asc&select=id,anio,mes')
+  # PowerShell 5.1 convierte la lista vacía [] en un elemento nulo: se filtran los que no traen id
+  $pend = @(Api Get 'sap_pedidos?estado=eq.pendiente&order=pedido_en.asc&select=id,anio,mes' | ForEach-Object { $_ } | Where-Object { $_ -and $_.id })
   if (-not $pend.Count) { return }
   Start-Transcript -Path $LOG -Append | Out-Null
   foreach ($p in $pend) {
@@ -151,5 +152,5 @@ if ($Pedidos) {
 
 if (-not $Desde) { throw 'Indique -Desde AAAA-MM (y opcional -Hasta AAAA-MM), o use -Pedidos' }
 if (-not $Hasta) { $Hasta = $Desde }
-$d = [datetime]::ParseExact("$Desde-01", 'yyyy-MM-dd', $null); $h = [datetime]::ParseExact("$Hasta-01", 'yyyy-MM-dd', $null)
-for ($m = $d; $m -le $h; $m = $m.AddMonths(1)) { CargarMes $m.Year $m.Month }
+$dIni = [datetime]::ParseExact("$Desde-01", 'yyyy-MM-dd', $null); $dFin = [datetime]::ParseExact("$Hasta-01", 'yyyy-MM-dd', $null)
+for ($m = $dIni; $m -le $dFin; $m = $m.AddMonths(1)) { CargarMes $m.Year $m.Month }
