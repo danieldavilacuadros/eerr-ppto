@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useDatos } from '../lib/datos'
-import { num } from '../lib/formato'
+import { MESES_LARGOS, num } from '../lib/formato'
 import { leerTabla } from '../lib/excel'
 import { supabase } from '../lib/supabase'
 
@@ -132,6 +132,7 @@ export default function CargaReal() {
       <h1>Carga del real (SAP)</h1>
       <p className="sub">Suba el detalle contable del mes (base de datos SAP) con columnas: Año, Mes (o Fecha), Sede, Unidad de negocio, Línea, Cuenta, Importe.
         Los meses incluidos en el archivo reemplazan lo cargado antes.</p>
+      <ActualizarSap />
       <div className="tarjeta">
         <div className="filtros">
           <label>Escenario real
@@ -164,6 +165,66 @@ export default function CargaReal() {
         )}
         {estado && <div className={`alerta ${estado.startsWith('Error') ? 'error' : 'ok'}`}>{estado}</div>}
       </div>
+    </div>
+  )
+}
+
+// =============================================================================== actualización desde SAP
+interface Pedido { id: number; anio: number; mes: number; estado: string; mensaje: string | null; pedido_en: string; atendido_en: string | null }
+
+/** Botón que pide al script de la PC con acceso a SAP que traiga el real del último mes cerrado. */
+function ActualizarSap() {
+  const hoy = new Date()
+  const ultimo = new Date(hoy.getFullYear(), hoy.getMonth() - 1, 1) // último mes cerrado
+  const anio = ultimo.getFullYear(), mes = ultimo.getMonth() + 1
+  const [pedidos, setPedidos] = useState<Pedido[] | null>(null)
+  const [msg, setMsg] = useState<string | null>(null)
+
+  const cargar = useCallback(async () => {
+    const { data, error } = await supabase.from('sap_pedidos').select('*').order('pedido_en', { ascending: false }).limit(5)
+    if (error) { setMsg(error.message); setPedidos([]); return }
+    setPedidos((data ?? []) as Pedido[])
+  }, [])
+  useEffect(() => { cargar() }, [cargar])
+
+  const pendiente = pedidos?.find(p => p.estado === 'pendiente' || p.estado === 'procesando')
+
+  async function pedir() {
+    setMsg(null)
+    const { error } = await supabase.from('sap_pedidos').insert({ anio, mes })
+    if (error) { setMsg(error.message); return }
+    setMsg(`Pedido registrado: ${MESES_LARGOS[mes - 1]} ${anio}. La PC con acceso a SAP (VPN) lo atenderá y reemplazará el real de ese mes.`)
+    cargar()
+  }
+
+  return (
+    <div className="tarjeta">
+      <div className="barra">
+        <strong>Actualizar desde SAP</strong>
+        <span className="ayuda">Sólo trae el último mes cerrado ({MESES_LARGOS[mes - 1]} {anio}) para no saturar SAP. Para varios meses use el script de la PC.</span>
+        <div className="espacio" />
+        <button className="primario" onClick={pedir} disabled={!!pendiente}>
+          {pendiente ? 'Pedido en curso…' : `Actualizar ${MESES_LARGOS[mes - 1].toLowerCase()} desde SAP`}
+        </button>
+        <button onClick={cargar}>Refrescar</button>
+      </div>
+      {msg && <div className="alerta">{msg}</div>}
+      {pedidos && pedidos.length > 0 && (
+        <table className="tabla">
+          <thead><tr><th>Período</th><th>Estado</th><th>Pedido</th><th>Atendido</th><th>Detalle</th></tr></thead>
+          <tbody>
+            {pedidos.map(p => (
+              <tr key={p.id}>
+                <td>{MESES_LARGOS[p.mes - 1]} {p.anio}</td>
+                <td><span className={`chip ${p.estado === 'ok' ? 'ok' : p.estado === 'error' ? 'error' : 'azul'}`}>{p.estado}</span></td>
+                <td>{new Date(p.pedido_en).toLocaleString('es-PE')}</td>
+                <td>{p.atendido_en ? new Date(p.atendido_en).toLocaleString('es-PE') : '—'}</td>
+                <td>{p.mensaje ?? ''}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   )
 }

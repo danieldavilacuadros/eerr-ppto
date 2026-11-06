@@ -158,3 +158,4 @@ label.check { flex-direction: row; align-items: center; gap: 6px; font-size: 13p
 .celda.total { font-weight: 600; background: #f3f5f8; }
 .celda-ro { display: block; padding: 4px 6px; text-align: right; }
 .reporte td.n { min-width: 92px; }
+.vistas-reporte { margin: 10px 0; }

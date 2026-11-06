@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { AGRUPACION_DEFECTO, CONCEPTOS, type Concepto } from '../lib/consolidado'
 import { useDatos } from '../lib/datos'
 import { supabase } from '../lib/supabase'
 import type { Mapeo, Vista } from '../lib/tipos'
@@ -134,6 +135,53 @@ export default function Mapeos() {
           </tbody>
         </table>
       </div>
+
+      <AgrupacionConsolidada />
+    </div>
+  )
+}
+
+/** Mantenimiento: a qué concepto de la vista consolidada va cada sección de la vista comercial. */
+function AgrupacionConsolidada() {
+  const { cat } = useDatos()
+  const [agr, setAgr] = useState<Record<string, Concepto> | null>(null)
+  const [msg, setMsg] = useState<string | null>(null)
+  useEffect(() => {
+    supabase.from('consolidado_secciones').select('seccion, concepto').then(({ data, error }) => {
+      if (error) { setMsg('Falta ejecutar la migración 003 en Supabase.'); setAgr({ ...AGRUPACION_DEFECTO }); return }
+      setAgr({ ...AGRUPACION_DEFECTO, ...Object.fromEntries((data ?? []).map(r => [r.seccion, r.concepto as Concepto])) })
+    })
+  }, [])
+  if (!cat || !agr) return null
+  const secciones = cat.rubros.filter(r => r.vista === 'comercial' && r.tipo === 'seccion').sort((a, b) => a.orden - b.orden)
+  async function cambiar(seccion: string, concepto: Concepto) {
+    setAgr(a => ({ ...a!, [seccion]: concepto }))
+    const { error } = await supabase.from('consolidado_secciones').upsert({ seccion, concepto, updated_at: new Date().toISOString() })
+    setMsg(error ? error.message : 'Guardado.')
+  }
+  return (
+    <div className="tarjeta">
+      <h3>Agrupación de la vista consolidada</h3>
+      <p className="sub">Define cómo se arma la vista consolidada de Estados de resultados (Ingresos, Costos, Margen bruto, Gastos, Margen de contribución y,
+        en la vista general, hasta el Resultado operativo neto). Cada sección comercial reúne los rubros a los que se asignan las cuentas arriba;
+        una cuenta nueva sólo necesita su rubro para entrar en la agrupación.</p>
+      {msg && <div className="alerta">{msg}</div>}
+      <table className="tabla simple">
+        <thead><tr><th>Sección (vista comercial)</th><th>Rubros</th><th>Concepto consolidado</th></tr></thead>
+        <tbody>
+          {secciones.map(s => (
+            <tr key={s.codigo}>
+              <td><strong>{s.nombre}</strong></td>
+              <td className="ayuda">{cat.rubros.filter(r => r.vista === 'comercial' && r.padre === s.codigo).map(r => r.nombre).join(' · ')}</td>
+              <td>
+                <select value={agr[s.codigo] ?? 'NO_INCLUIR'} onChange={e => cambiar(s.codigo, e.target.value as Concepto)}>
+                  {CONCEPTOS.map(c => <option key={c.codigo} value={c.codigo}>{c.nombre}</option>)}
+                </select>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   )
 }
