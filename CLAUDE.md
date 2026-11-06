@@ -67,7 +67,10 @@ financiera). Responder en español. Ver `README.md` para módulos, roles y conve
 ## Pendientes
 
 1. Confirmar con contabilidad el nombre y el rubro de 6861900, y que la vista general ya no muestre "sin clasificar".
-2. Probar el botón "Actualizar desde SAP" (cargaría octubre 2026 sólo con SAP; faltarían sus extra libros).
+2. Botón "Actualizar desde SAP" probado el 06/11/2026: octubre 2026 = 3,459 filas, S/ 5,761,433.18 (sólo SAP, sin extra
+   libros; en línea con jul–ago). Trajo 5 cuentas nuevas, mapeadas copiando a una hermana: 6551100←6551300,
+   6911124←6911107, 6941095←6941094, 7011124←7011107, 7411107←7411118. Cada mes nuevo puede traer cuentas nuevas:
+   revisar *Mapeo de cuentas* › "Solo sin clasificar" después de cada carga.
 3. Pedir a Jorge Castro su registro extra libros mensual 2026 (formato del modelo) para reemplazar los calculados.
 4. Invitar a los jefes (Supabase › Auth › Invite user) y asignarles rol y accesos en *Usuarios*.
 5. No se ha recibido archivo de PPTO 2027; si llega, adaptar la importación.
