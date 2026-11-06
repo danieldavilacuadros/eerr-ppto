@@ -5,9 +5,10 @@
 #        powershell -ExecutionPolicy Bypass -File scripts\sap_sincronizar_real.ps1 -GuardarCredencial
 #   2) Barrer varios meses (script):
 #        powershell -ExecutionPolicy Bypass -File scripts\sap_sincronizar_real.ps1 -Desde 2026-01 -Hasta 2026-09
-#   3) Atender los pedidos del botón "Actualizar desde SAP" de la web (sólo el último mes):
+#   3) Atender los pedidos del botón "Actualizar desde SAP" de la web (sólo el último mes, máximo uno por día):
 #        powershell -ExecutionPolicy Bypass -File scripts\sap_sincronizar_real.ps1 -Pedidos
-#      (se puede programar como tarea de Windows cada 5 minutos: sale sin hacer nada si no hay pedidos o no ve SAP)
+#      (tarea de Windows "EERR - Sincronizar SAP" al iniciar sesión: espera hasta 30 min la VPN; sale sin hacer nada
+#       si no hay pedidos, si hoy ya atendió uno o si no ve SAP)
 #
 # Requiere: credencial SAP de solo lectura guardada con sap_guardar_credencial.ps1 (%LOCALAPPDATA%\PCI\sap_credencial.xml)
 # y el archivo .env.local del proyecto con VITE_SUPABASE_URL y VITE_SUPABASE_ANON_KEY.
@@ -46,7 +47,14 @@ function SapVisible {
   $tcp = New-Object Net.Sockets.TcpClient
   try { return ($tcp.ConnectAsync($cfgSap.Servidor, 1433).Wait(3000) -and $tcp.Connected) } catch { return $false } finally { $tcp.Close() }
 }
-if ($Pedidos -and -not (SapVisible)) { return }   # modo programado: sin VPN no hace nada
+if ($Pedidos) {
+  # modo programado (al iniciar sesión en Windows): espera hasta 30 min a que se conecte la VPN; si no, sale sin hacer nada
+  $limite = (Get-Date).AddMinutes(30)
+  while (-not (SapVisible)) {
+    if ((Get-Date) -gt $limite) { return }
+    Start-Sleep -Seconds 60
+  }
+}
 
 # ------------------------------------------------------------------ sesión en la plataforma
 if (-not (Test-Path $CRED_PLAT)) { throw "Falta la credencial de la plataforma: ejecute con -GuardarCredencial" }
@@ -134,6 +142,11 @@ if ($Pedidos) {
   # PowerShell 5.1 convierte la lista vacía [] en un elemento nulo: se filtran los que no traen id
   $pend = @(Api Get 'sap_pedidos?estado=eq.pendiente&order=pedido_en.asc&select=id,anio,mes' | ForEach-Object { $_ } | Where-Object { $_ -and $_.id })
   if (-not $pend.Count) { return }
+  # como máximo UN mes por día: si hoy ya se atendió un pedido, los pendientes esperan al siguiente día
+  $hoyUtc = (Get-Date).Date.ToUniversalTime().ToString('o')
+  $hechos = @(Api Get "sap_pedidos?estado=eq.ok&atendido_en=gte.$hoyUtc&select=id" | ForEach-Object { $_ } | Where-Object { $_ -and $_.id })
+  if ($hechos.Count) { return }
+  $pend = @($pend | Select-Object -Last 1)   # el pedido más reciente; los anteriores quedan pendientes
   Start-Transcript -Path $LOG -Append | Out-Null
   foreach ($p in $pend) {
     Api Patch "sap_pedidos?id=eq.$($p.id)" @{ estado = 'procesando' } @{ Prefer = 'return=minimal' } | Out-Null

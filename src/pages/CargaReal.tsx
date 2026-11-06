@@ -188,12 +188,17 @@ function ActualizarSap() {
   useEffect(() => { cargar() }, [cargar])
 
   const pendiente = pedidos?.find(p => p.estado === 'pendiente' || p.estado === 'procesando')
+  // un pedido por día (los que terminaron en error no cuentan, para poder reintentar)
+  const deHoy = pedidos?.find(p => p.estado !== 'error' && new Date(p.pedido_en).toDateString() === hoy.toDateString())
 
   async function pedir() {
     setMsg(null)
+    const { data: hoyBD } = await supabase.from('sap_pedidos').select('id')
+      .neq('estado', 'error').gte('pedido_en', new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate()).toISOString()).limit(1)
+    if (hoyBD && hoyBD.length) { setMsg('Ya hay un pedido de hoy. Se permite una actualización desde SAP por día.'); cargar(); return }
     const { error } = await supabase.from('sap_pedidos').insert({ anio, mes })
     if (error) { setMsg(error.message); return }
-    setMsg(`Pedido registrado: ${MESES_LARGOS[mes - 1]} ${anio}. La PC con acceso a SAP (VPN) lo atenderá y reemplazará el real de ese mes.`)
+    setMsg(`Pedido registrado: ${MESES_LARGOS[mes - 1]} ${anio}. Se atenderá la próxima vez que se inicie la PC con acceso a SAP (VPN) y reemplazará el real de ese mes.`)
     cargar()
   }
 
@@ -201,10 +206,10 @@ function ActualizarSap() {
     <div className="tarjeta">
       <div className="barra">
         <strong>Actualizar desde SAP</strong>
-        <span className="ayuda">Sólo trae el último mes cerrado ({MESES_LARGOS[mes - 1]} {anio}) para no saturar SAP. Para varios meses use el script de la PC.</span>
+        <span className="ayuda">Sólo trae el último mes cerrado ({MESES_LARGOS[mes - 1]} {anio}), una vez al día, para no saturar SAP. Se atiende al iniciar la PC con acceso a SAP. Para varios meses use el script de la PC.</span>
         <div className="espacio" />
-        <button className="primario" onClick={pedir} disabled={!!pendiente}>
-          {pendiente ? 'Pedido en curso…' : `Actualizar ${MESES_LARGOS[mes - 1].toLowerCase()} desde SAP`}
+        <button className="primario" onClick={pedir} disabled={!!pendiente || !!deHoy}>
+          {pendiente ? 'Pedido en curso…' : deHoy ? 'Ya se actualizó hoy' : `Actualizar ${MESES_LARGOS[mes - 1].toLowerCase()} desde SAP`}
         </button>
         <button onClick={cargar}>Refrescar</button>
       </div>

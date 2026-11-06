@@ -44,15 +44,18 @@ financiera). Responder en español. Ver `README.md` para módulos, roles y conve
   plegables.
 - **Mapeo de cuentas:** además del rubro de cada cuenta (filtro "Solo sin clasificar"), tarjeta *Agrupación de la vista
   consolidada* (tabla `consolidado_secciones`).
-- **Carga real:** botón "Actualizar desde SAP" que pide sólo el último mes cerrado (tabla `sap_pedidos`).
+- **Carga real:** botón "Actualizar desde SAP" que pide sólo el último mes cerrado, una vez al día (tabla `sap_pedidos`).
 
 ### Vínculo con SAP
 
 - Script `scripts/sap_sincronizar_real.ps1` (sólo lectura en SAP, usuario RS2 con credencial DPAPI de PCI en
   `%LOCALAPPDATA%\PCI\sap_credencial.xml`; credencial de la plataforma en `%LOCALAPPDATA%\EERR\plataforma_credencial.xml`).
   - `-Desde AAAA-MM [-Hasta AAAA-MM]` barre meses y reemplaza el real (no toca extra libros).
-  - `-Pedidos` atiende el botón de la web. Tarea de Windows **"EERR - Sincronizar SAP"** cada 5 min (sale si no hay VPN
-    o pedidos). Log en `%LOCALAPPDATA%\EERR\sap_sincronizar_real.log`.
+  - `-Pedidos` atiende el botón de la web. **Una actualización (un mes) por día** (pedido de Daniel, 06/11/2026): la web
+    permite un pedido diario (los que terminan en error no cuentan) y el script atiende como máximo uno por día (el más
+    reciente; los demás quedan pendientes). Tarea de Windows **"EERR - Sincronizar SAP"** sólo **al iniciar sesión** (2 min
+    de retraso): espera hasta 30 min a que se conecte la VPN y sale si no hay pedidos. Log en
+    `%LOCALAPPDATA%\EERR\sap_sincronizar_real.log`.
   - Reglas: sin sede/TAC → AQP; sin unidad → GEN; PLYP → REP; sin línea → GENERAL; PREMIUN → VOLVO; excluye 60x/61x/79x.
 - Bases SAP: hasta jun-2026 `SBO_INCA_PROD`; desde jul-2026 `SBO_INCAMOTORS_2026` (su 30/06 es saldo inicial sin centro:
   el cierre de junio — planilla, depreciación, ventas de fin de mes — sólo está ahí y va como extra libros).
