@@ -26,8 +26,10 @@ financiera). Responder en español. Ver `README.md` para módulos, roles y conve
 - **Real SAP:** 26,351 filas, S/ 30,629,155.07 (enero–junio de `SBO_INCA_PROD`, julio–setiembre de `SBO_INCAMOTORS_2026`).
 - **Extra libros:** 2,812 celdas, S/ 5,246,038.62 = ER por líneas de contabilidad − SAP (sin reparto de GG en las líneas).
 - **Factores de distribución:** 1,130 (GG y TC, ene–set) = reparto del ER ÷ ingresos de la línea en la plataforma.
-- SAP + extra libros = S/ 35.88 M ≈ EEFF ene–set (35.82 M). La vista general da 35.91 M; la diferencia (−31.7 mil) son
-  4 cuentas nuevas de SAP sin clasificar (6551510, 6861900, 7041084, 7411186).
+- SAP + extra libros = S/ 35.88 M ≈ EEFF ene–set (35.82 M). Las 4 cuentas nuevas de SAP que faltaban se mapearon el
+  05/11/2026 siguiendo a sus cuentas hermanas: 6551510 (cómputo) como 6551410/520/530; 7041084 (mano de obra propia)
+  como 7041089; 7411186 (servicio de terceros) como la familia 741; 6861900 (sin nombre en SAP; en el ER va en la fila
+  "Otros gastos") → contable `CD_OTROS_INGRESOS_Y_GASTOS`, comercial `MD_OTROS_GASTOS`. Ya no hay cuentas sin rubro.
 - Fuente del ER: `ER X LINEAS DE NEGOCIO SETIEMBRE 2026-D.R_OK1.xlsx` (correo de Jorge Castro, 15/10/2026). Su hoja
   `CONTROL SEP.26` define cómo contabilidad asigna SAP a cada hoja; las reglas están replicadas en el script de carga.
 
@@ -64,7 +66,7 @@ financiera). Responder en español. Ver `README.md` para módulos, roles y conve
 
 ## Pendientes
 
-1. Asignar rubro a las 4 cuentas nuevas de SAP en *Mapeo de cuentas*.
+1. Confirmar con contabilidad el nombre y el rubro de 6861900, y que la vista general ya no muestre "sin clasificar".
 2. Probar el botón "Actualizar desde SAP" (cargaría octubre 2026 sólo con SAP; faltarían sus extra libros).
 3. Pedir a Jorge Castro su registro extra libros mensual 2026 (formato del modelo) para reemplazar los calculados.
 4. Invitar a los jefes (Supabase › Auth › Invite user) y asignarles rol y accesos en *Usuarios*.
