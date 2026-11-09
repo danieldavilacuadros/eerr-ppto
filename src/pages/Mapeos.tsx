@@ -1,187 +1,172 @@
-import { useEffect, useMemo, useState } from 'react'
-import { AGRUPACION_DEFECTO, CONCEPTOS, type Concepto } from '../lib/consolidado'
+import { useMemo, useState } from 'react'
 import { useDatos } from '../lib/datos'
 import { supabase } from '../lib/supabase'
-import type { Mapeo, Vista } from '../lib/tipos'
 
-/** Contabilidad mantiene aquí a qué rubro (contable y comercial) va cada cuenta mayor. */
+/**
+ * Mapa de cuentas (Excel "MAPA DE CUENTAS - ok"): cada cuenta mayor tiene el nombre que se muestra y un rubro.
+ * El mismo mapa vale para todas las sedes, unidades, líneas y marcas; los esquemas 1 y 2 se arman con esos rubros.
+ */
 export default function Mapeos() {
   const { cat, recargar } = useDatos()
   const [buscar, setBuscar] = useState('')
   const [soloSin, setSoloSin] = useState(false)
+  const [rubroFiltro, setRubroFiltro] = useState('')
   const [msg, setMsg] = useState<{ tipo: string; texto: string } | null>(null)
-  const [nueva, setNueva] = useState({ cuenta: '', nombre: '' })
-  const [exc, setExc] = useState({ vista: 'comercial' as Vista, cuenta: '', unidad: '', rubro: '' })
+  const [nueva, setNueva] = useState({ cuenta: '', nombre: '', rubro: '' })
+  const [exc, setExc] = useState({ cuenta: '', unidad: '', rubro: '' })
+  const [nuevoRubro, setNuevoRubro] = useState('')
 
-  const detalles = useMemo(() => {
-    const r = cat?.rubros ?? []
-    const nombreSec = new Map(r.map(x => [`${x.vista}|${x.codigo}`, x.nombre]))
-    return (v: Vista) => r.filter(x => x.vista === v && x.tipo === 'detalle')
-      .map(x => ({ ...x, etiqueta: `${nombreSec.get(`${v}|${x.padre}`) ?? ''} › ${x.nombre}` }))
-  }, [cat])
-  const base = useMemo(() => {
-    const m = new Map<string, Mapeo>()
-    for (const x of cat?.mapeos ?? []) if (!x.unidad) m.set(`${x.vista}|${x.cuenta}`, x)
+  const usoRubro = useMemo(() => {
+    const m = new Map<string, Set<string>>()
+    for (const f of cat?.esquemas ?? []) if (f.rubro) { if (!m.has(f.rubro)) m.set(f.rubro, new Set()); m.get(f.rubro)!.add(f.esquema) }
     return m
   }, [cat])
 
   if (!cat) return null
+  const ok = (texto: string) => { setMsg({ tipo: 'ok', texto }); recargar() }
+  const falla = (e: { message: string }) => setMsg({ tipo: 'error', texto: e.message })
 
-  async function cambiar(vista: Vista, cuenta: string, rubro: string) {
-    setMsg(null)
-    const actual = base.get(`${vista}|${cuenta}`)
-    const { error } = actual
-      ? rubro
-        ? await supabase.from('mapeo_cuentas').update({ rubro }).eq('id', actual.id)
-        : await supabase.from('mapeo_cuentas').delete().eq('id', actual.id)
-      : await supabase.from('mapeo_cuentas').insert({ vista, cuenta, rubro })
-    if (error) setMsg({ tipo: 'error', texto: error.message })
-    else { setMsg({ tipo: 'ok', texto: `Cuenta ${cuenta} actualizada (${vista}).` }); recargar() }
+  async function cambiarRubro(cuenta: string, rubro: string) {
+    const { error } = await supabase.from('cuentas').update({ rubro: rubro || null }).eq('cuenta', cuenta)
+    if (error) falla(error); else ok(`Cuenta ${cuenta}: rubro ${rubro || '(sin rubro)'}.`)
   }
-
+  async function cambiarNombre(cuenta: string, nombre: string, anterior: string) {
+    const n = nombre.trim().toUpperCase()
+    if (!n || n === anterior) return
+    const { error } = await supabase.from('cuentas').update({ nombre: n }).eq('cuenta', cuenta)
+    if (error) falla(error); else ok(`Cuenta ${cuenta}: nombre actualizado.`)
+  }
   async function crearCuenta() {
-    if (!/^\d{7}$/.test(nueva.cuenta) || !nueva.nombre.trim()) return
-    const { error } = await supabase.from('cuentas').insert({ cuenta: nueva.cuenta, nombre: nueva.nombre.trim().toUpperCase(), clase: nueva.cuenta[0] })
-    if (error) setMsg({ tipo: 'error', texto: error.message })
-    else { setNueva({ cuenta: '', nombre: '' }); recargar() }
+    if (!/^\d{7}$/.test(nueva.cuenta) || !nueva.nombre.trim()) return setMsg({ tipo: 'error', texto: 'La cuenta debe tener 7 dígitos y un nombre.' })
+    const { error } = await supabase.from('cuentas').insert({
+      cuenta: nueva.cuenta, nombre: nueva.nombre.trim().toUpperCase(), clase: nueva.cuenta[0], rubro: nueva.rubro || null,
+    })
+    if (error) falla(error); else { setNueva({ cuenta: '', nombre: '', rubro: '' }); ok(`Cuenta ${nueva.cuenta} creada.`) }
   }
-
   async function crearExcepcion() {
     if (!exc.cuenta || !exc.unidad || !exc.rubro) return
-    const { error } = await supabase.from('mapeo_cuentas').insert(exc)
-    if (error) setMsg({ tipo: 'error', texto: error.message }); else recargar()
+    const { error } = await supabase.from('mapa_excepciones').upsert(exc)
+    if (error) falla(error); else { setExc({ cuenta: '', unidad: '', rubro: '' }); ok('Excepción guardada.') }
   }
-  async function borrarExcepcion(id: number) {
-    const { error } = await supabase.from('mapeo_cuentas').delete().eq('id', id)
-    if (error) setMsg({ tipo: 'error', texto: error.message }); else recargar()
+  async function borrarExcepcion(cuenta: string, unidad: string) {
+    const { error } = await supabase.from('mapa_excepciones').delete().eq('cuenta', cuenta).eq('unidad', unidad)
+    if (error) falla(error); else ok('Excepción quitada.')
+  }
+  async function crearRubro() {
+    const codigo = nuevoRubro.trim().toUpperCase()
+    if (!codigo) return
+    const { error } = await supabase.from('rubros_eerr').insert({ codigo, orden: cat!.rubros.length + 1 })
+    if (error) falla(error); else { setNuevoRubro(''); ok(`Rubro ${codigo} creado. Para que aparezca en los reportes hay que agregarlo a los esquemas.`) }
   }
 
   const f = buscar.trim().toLowerCase()
   const lista = cat.cuentas.filter(c => !c.es_estadistica)
     .filter(c => !f || c.cuenta.includes(f) || c.nombre.toLowerCase().includes(f))
-    .filter(c => !soloSin || !base.has(`contable|${c.cuenta}`) || !base.has(`comercial|${c.cuenta}`))
-  const excepciones = cat.mapeos.filter(m => m.unidad)
-  const nombreRubro = (v: Vista, c: string) => cat.rubros.find(r => r.vista === v && r.codigo === c)?.nombre ?? c
-  const sinCount = cat.cuentas.filter(c => !c.es_estadistica && (!base.has(`contable|${c.cuenta}`) || !base.has(`comercial|${c.cuenta}`))).length
+    .filter(c => !soloSin || !c.rubro || !usoRubro.has(c.rubro))
+    .filter(c => !rubroFiltro || c.rubro === rubroFiltro)
+  const sinCount = cat.cuentas.filter(c => !c.es_estadistica && (!c.rubro || !usoRubro.has(c.rubro))).length
+  const cuentasPorRubro = new Map<string, number>()
+  for (const c of cat.cuentas) if (c.rubro) cuentasPorRubro.set(c.rubro, (cuentasPorRubro.get(c.rubro) ?? 0) + 1)
+  const opcionesRubro = cat.rubros.map(r => <option key={r.codigo} value={r.codigo}>{r.codigo}</option>)
 
   return (
     <div>
-      <h1>Mapeo de cuentas mayores</h1>
-      <p className="sub">Cada cuenta debe tener un rubro en la vista contable y en la comercial; así ambos reportes cuadran. {sinCount > 0 &&
-        <span className="chip error">{sinCount} cuenta(s) sin clasificar</span>}</p>
+      <h1>Mapa de cuentas</h1>
+      <p className="sub">Cada cuenta mayor tiene el nombre que se muestra y su rubro. El mismo mapa se usa para todas las sedes, unidades,
+        líneas y marcas, en el real y en el presupuesto. {sinCount > 0 && <span className="chip error">{sinCount} cuenta(s) sin rubro</span>}</p>
       {msg && <div className={`alerta ${msg.tipo}`}>{msg.texto}</div>}
 
       <div className="tarjeta">
         <div className="barra">
           <input className="buscar" placeholder="Buscar cuenta o nombre…" value={buscar} onChange={e => setBuscar(e.target.value)} />
-          <label className="check"><input type="checkbox" checked={soloSin} onChange={e => setSoloSin(e.target.checked)} /> Solo sin clasificar</label>
-          <div className="espacio" />
-          <input placeholder="Nueva cuenta (7 dígitos)" value={nueva.cuenta} onChange={e => setNueva({ ...nueva, cuenta: e.target.value.trim() })} style={{ width: 170 }} />
-          <input placeholder="Nombre" value={nueva.nombre} onChange={e => setNueva({ ...nueva, nombre: e.target.value })} />
-          <button onClick={crearCuenta}>Crear cuenta</button>
+          <select value={rubroFiltro} onChange={e => setRubroFiltro(e.target.value)}>
+            <option value="">Todos los rubros</option>{opcionesRubro}
+          </select>
+          <label className="check"><input type="checkbox" checked={soloSin} onChange={e => setSoloSin(e.target.checked)} /> Solo sin rubro</label>
+          <span className="ayuda">{lista.length} cuenta(s)</span>
         </div>
         <div className="scroll" style={{ maxHeight: '60vh' }}>
           <table className="tabla simple">
-            <thead><tr><th>Cuenta</th><th>Nombre</th><th>Rubro vista contable</th><th>Rubro vista comercial</th></tr></thead>
+            <thead><tr><th>Cuenta</th><th>Nombre a mostrar</th><th>Rubro</th></tr></thead>
             <tbody>
               {lista.map(c => (
                 <tr key={c.cuenta}>
                   <td className="cod">{c.cuenta}</td>
-                  <td>{c.nombre}</td>
-                  {(['contable', 'comercial'] as Vista[]).map(v => (
-                    <td key={v}>
-                      <select className={base.has(`${v}|${c.cuenta}`) ? '' : 'falta'} value={base.get(`${v}|${c.cuenta}`)?.rubro ?? ''}
-                        onChange={e => cambiar(v, c.cuenta, e.target.value)}>
-                        <option value="">— sin clasificar —</option>
-                        {detalles(v).map(r => <option key={r.codigo} value={r.codigo}>{r.etiqueta}</option>)}
-                      </select>
-                    </td>
-                  ))}
+                  <td><input key={c.nombre} defaultValue={c.nombre} style={{ width: '100%' }}
+                    onBlur={e => cambiarNombre(c.cuenta, e.target.value, c.nombre)} onKeyDown={e => e.key === 'Enter' && e.currentTarget.blur()} /></td>
+                  <td>
+                    <select className={c.rubro && usoRubro.has(c.rubro) ? '' : 'falta'} value={c.rubro ?? ''} onChange={e => cambiarRubro(c.cuenta, e.target.value)}>
+                      <option value="">— sin rubro —</option>{opcionesRubro}
+                    </select>
+                  </td>
                 </tr>
               ))}
             </tbody>
+            <tfoot>
+              <tr>
+                <td><input placeholder="7 dígitos" value={nueva.cuenta} style={{ width: 90 }} onChange={e => setNueva({ ...nueva, cuenta: e.target.value.trim() })} /></td>
+                <td><input placeholder="Nombre de la cuenta nueva" value={nueva.nombre} style={{ width: '100%' }} onChange={e => setNueva({ ...nueva, nombre: e.target.value })} /></td>
+                <td>
+                  <select value={nueva.rubro} onChange={e => setNueva({ ...nueva, rubro: e.target.value })}><option value="">Rubro…</option>{opcionesRubro}</select>{' '}
+                  <button onClick={crearCuenta}>Crear cuenta</button>
+                </td>
+              </tr>
+            </tfoot>
           </table>
         </div>
       </div>
 
-      <div className="tarjeta">
-        <h3>Excepciones por unidad de negocio</h3>
-        <p className="sub">Cuando una cuenta va a un rubro distinto según la unidad (ej. 704 en Taller = Ventas del taller).</p>
-        <div className="filtros">
-          <select value={exc.vista} onChange={e => setExc({ ...exc, vista: e.target.value as Vista, rubro: '' })}>
-            <option value="comercial">Comercial</option><option value="contable">Contable</option>
-          </select>
-          <input list="ctas-map" placeholder="Cuenta" value={exc.cuenta} onChange={e => setExc({ ...exc, cuenta: e.target.value.split(' ')[0] })} />
-          <datalist id="ctas-map">{cat.cuentas.map(c => <option key={c.cuenta} value={`${c.cuenta} ${c.nombre}`} />)}</datalist>
-          <select value={exc.unidad} onChange={e => setExc({ ...exc, unidad: e.target.value })}>
-            <option value="">Unidad…</option>
-            {cat.unidades.map(u => <option key={u.codigo} value={u.codigo}>{u.nombre}</option>)}
-          </select>
-          <select value={exc.rubro} onChange={e => setExc({ ...exc, rubro: e.target.value })}>
-            <option value="">Rubro…</option>
-            {detalles(exc.vista).map(r => <option key={r.codigo} value={r.codigo}>{r.etiqueta}</option>)}
-          </select>
-          <button onClick={crearExcepcion}>Agregar excepción</button>
-        </div>
-        <table className="tabla simple">
-          <thead><tr><th>Vista</th><th>Cuenta</th><th>Unidad</th><th>Rubro</th><th /></tr></thead>
-          <tbody>
-            {excepciones.map(m => (
-              <tr key={m.id}>
-                <td>{m.vista}</td><td className="cod">{m.cuenta}</td><td>{m.unidad}</td><td>{nombreRubro(m.vista, m.rubro)}</td>
-                <td><button className="link" onClick={() => borrarExcepcion(m.id)}>Quitar</button></td>
+      <div className="dos-columnas">
+        <div className="tarjeta">
+          <h3>Excepciones por unidad de negocio</h3>
+          <p className="sub">Sólo para cuentas que en una unidad van a otro rubro (ej. 7599100 en Venta de unidades = Incentivo fuerza de ventas).</p>
+          <table className="tabla simple">
+            <thead><tr><th>Cuenta</th><th>Unidad</th><th>Rubro</th><th /></tr></thead>
+            <tbody>
+              {cat.excepciones.map(x => (
+                <tr key={`${x.cuenta}|${x.unidad}`}>
+                  <td className="cod">{x.cuenta}</td><td>{cat.unidades.find(u => u.codigo === x.unidad)?.nombre ?? x.unidad}</td><td>{x.rubro}</td>
+                  <td><button className="link" onClick={() => borrarExcepcion(x.cuenta, x.unidad)}>Quitar</button></td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr>
+                <td><input list="ctas-map" placeholder="Cuenta" value={exc.cuenta} style={{ width: 90 }} onChange={e => setExc({ ...exc, cuenta: e.target.value.split(' ')[0] })} />
+                  <datalist id="ctas-map">{cat.cuentas.map(c => <option key={c.cuenta} value={`${c.cuenta} ${c.nombre}`} />)}</datalist></td>
+                <td><select value={exc.unidad} onChange={e => setExc({ ...exc, unidad: e.target.value })}>
+                  <option value="">Unidad…</option>{cat.unidades.map(u => <option key={u.codigo} value={u.codigo}>{u.nombre}</option>)}</select></td>
+                <td><select value={exc.rubro} onChange={e => setExc({ ...exc, rubro: e.target.value })}><option value="">Rubro…</option>{opcionesRubro}</select></td>
+                <td><button onClick={crearExcepcion}>Agregar</button></td>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </tfoot>
+          </table>
+        </div>
+
+        <div className="tarjeta">
+          <h3>Rubros ({cat.rubros.length})</h3>
+          <p className="sub">Un rubro que no está en los esquemas no aparece en los reportes (sus cuentas quedan como "sin rubro").</p>
+          <div className="scroll" style={{ maxHeight: '45vh' }}>
+            <table className="tabla simple">
+              <thead><tr><th>Rubro</th><th className="n">Cuentas</th><th>Esquemas</th></tr></thead>
+              <tbody>
+                {cat.rubros.map(r => (
+                  <tr key={r.codigo} className="clic" onClick={() => setRubroFiltro(r.codigo)} title="Ver sus cuentas">
+                    <td>{r.codigo}</td>
+                    <td className="n">{cuentasPorRubro.get(r.codigo) ?? 0}</td>
+                    <td>{usoRubro.has(r.codigo) ? [...usoRubro.get(r.codigo)!].sort().map(e => <span key={e} className="chip azul">{e === 'E1' ? 'Esquema 1' : 'Esquema 2'}</span>)
+                      : <span className="chip error">No está en los esquemas</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="barra" style={{ marginTop: 8 }}>
+            <input placeholder="Nuevo rubro" value={nuevoRubro} onChange={e => setNuevoRubro(e.target.value)} />
+            <button onClick={crearRubro}>Crear rubro</button>
+          </div>
+        </div>
       </div>
-
-      <AgrupacionConsolidada />
-    </div>
-  )
-}
-
-/** Mantenimiento: a qué concepto de la vista consolidada va cada sección de la vista comercial. */
-function AgrupacionConsolidada() {
-  const { cat } = useDatos()
-  const [agr, setAgr] = useState<Record<string, Concepto> | null>(null)
-  const [msg, setMsg] = useState<string | null>(null)
-  useEffect(() => {
-    supabase.from('consolidado_secciones').select('seccion, concepto').then(({ data, error }) => {
-      if (error) { setMsg('Falta ejecutar la migración 003 en Supabase.'); setAgr({ ...AGRUPACION_DEFECTO }); return }
-      setAgr({ ...AGRUPACION_DEFECTO, ...Object.fromEntries((data ?? []).map(r => [r.seccion, r.concepto as Concepto])) })
-    })
-  }, [])
-  if (!cat || !agr) return null
-  const secciones = cat.rubros.filter(r => r.vista === 'comercial' && r.tipo === 'seccion').sort((a, b) => a.orden - b.orden)
-  async function cambiar(seccion: string, concepto: Concepto) {
-    setAgr(a => ({ ...a!, [seccion]: concepto }))
-    const { error } = await supabase.from('consolidado_secciones').upsert({ seccion, concepto, updated_at: new Date().toISOString() })
-    setMsg(error ? error.message : 'Guardado.')
-  }
-  return (
-    <div className="tarjeta">
-      <h3>Agrupación de la vista consolidada</h3>
-      <p className="sub">Define cómo se arma la vista consolidada de Estados de resultados (Ingresos, Costos, Margen bruto, Gastos, Margen de contribución y,
-        en la vista general, hasta el Resultado operativo neto). Cada sección comercial reúne los rubros a los que se asignan las cuentas arriba;
-        una cuenta nueva sólo necesita su rubro para entrar en la agrupación.</p>
-      {msg && <div className="alerta">{msg}</div>}
-      <table className="tabla simple">
-        <thead><tr><th>Sección (vista comercial)</th><th>Rubros</th><th>Concepto consolidado</th></tr></thead>
-        <tbody>
-          {secciones.map(s => (
-            <tr key={s.codigo}>
-              <td><strong>{s.nombre}</strong></td>
-              <td className="ayuda">{cat.rubros.filter(r => r.vista === 'comercial' && r.padre === s.codigo).map(r => r.nombre).join(' · ')}</td>
-              <td>
-                <select value={agr[s.codigo] ?? 'NO_INCLUIR'} onChange={e => cambiar(s.codigo, e.target.value as Concepto)}>
-                  {CONCEPTOS.map(c => <option key={c.codigo} value={c.codigo}>{c.nombre}</option>)}
-                </select>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
     </div>
   )
 }

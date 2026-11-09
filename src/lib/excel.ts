@@ -165,8 +165,22 @@ export async function leerTabla(archivo: File): Promise<Record<string, unknown>[
   return filas.map(f => Object.fromEntries(Object.entries(f).map(([k, v]) => [norm(k), v])))
 }
 
-export function exportarTabla(aoa: (string | number | null)[][], archivo: string, hoja = 'Reporte') {
+/**
+ * Exporta un reporte; `niveles` (opcional, uno por fila de `aoa`) agrupa las filas como en el Excel original
+ * (botones 1, 2, 3 de esquema). `formatos` aplica un formato de número por columna (ej. '0.0%').
+ */
+export function exportarTabla(aoa: (string | number | null)[][], archivo: string, hoja = 'Reporte',
+  niveles?: number[], formatos?: (string | null)[]) {
   const ws = XLSX.utils.aoa_to_sheet(aoa)
+  if (niveles) ws['!rows'] = niveles.map(level => (level ? { level } : {}))
+  if (formatos) {
+    for (let r = 0; r < aoa.length; r++) {
+      formatos.forEach((z, c) => {
+        const celda = ws[XLSX.utils.encode_cell({ r, c })]
+        if (z && celda && celda.t === 'n') celda.z = z
+      })
+    }
+  }
   const wb = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(wb, ws, hoja)
   XLSX.writeFile(wb, archivo)

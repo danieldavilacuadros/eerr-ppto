@@ -1,5 +1,6 @@
 export type Rol = 'admin' | 'contabilidad' | 'jefe' | 'lectura'
-export type Vista = 'contable' | 'comercial'
+export type Esquema = 'E1' | 'E2'
+export type Empresa = 'INCAMOTORS' | 'NOVA_AUTOS'
 
 export interface Perfil {
   id: string
@@ -23,7 +24,7 @@ export interface Acceso {
 export interface Sede { codigo: string; nombre: string; orden: number }
 export interface LineaComercial { codigo: string; nombre: string; orden: number }
 export interface Unidad { codigo: string; nombre: string; linea_comercial: string; orden: number }
-export interface Linea { codigo: string; nombre: string }
+export interface Linea { codigo: string; nombre: string; empresa: Empresa }
 export interface Centro { sede: string; unidad: string; linea: string; activo: boolean }
 
 export interface Cuenta {
@@ -32,25 +33,28 @@ export interface Cuenta {
   clase: string
   es_estadistica: boolean
   activa: boolean
+  rubro: string | null
 }
 
-export interface Rubro {
-  vista: Vista
+export interface RubroEERR { codigo: string; orden: number }
+
+/** Fila de un reporte (Excel "ESQUEMA 1" / "ESQUEMA 2"). */
+export interface FilaEsquema {
+  esquema: Esquema
   codigo: string
-  nombre: string
-  tipo: 'seccion' | 'detalle' | 'total'
-  padre: string | null
-  formula: string[] | null
   orden: number
+  etiqueta: string | null
+  nivel: number
+  tipo: 'grupo' | 'rubro' | 'formula' | 'pct' | 'manual'
+  padre: string | null
+  rubro: string | null
+  formula: string[] | null
+  base: string | null
+  concepto: string | null
+  negrita: boolean
 }
 
-export interface Mapeo {
-  id: number
-  vista: Vista
-  cuenta: string
-  unidad: string | null
-  rubro: string
-}
+export interface MontoEmpresa { escenario_id: number; anio: number; mes: number; concepto: string; monto: number }
 
 export interface Escenario {
   id: number

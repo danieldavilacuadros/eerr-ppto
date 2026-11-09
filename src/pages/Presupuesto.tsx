@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Celda } from '../components/Celda'
-import { crearResolverRubro, nombreDe, puedeEditar, puedeVer, signoCuenta, useDatos } from '../lib/datos'
+import { nombreDe, puedeEditar, puedeVer, signoCuenta, useDatos } from '../lib/datos'
 import { MESES, ceros, num, parseNumero, pct, suma } from '../lib/formato'
-import { construirReporte, type FilaReporte } from '../lib/reporte'
+import { construirEsquema, crearRubroDe, filasVisibles, type FilaEERR } from '../lib/esquema'
+import { estacionalidad, r2, repartirRubro, signoRubro } from '../lib/reparto'
 import { supabase, traerTodo, upsertEnLotes } from '../lib/supabase'
 import { exportarPlantilla, leerPlantilla, type FilaPlantilla } from '../lib/excel'
-import type { Centro, Escenario, Monto, Vista } from '../lib/tipos'
+import type { Centro, Escenario, Esquema, Monto } from '../lib/tipos'
 
 type Sel = { sede: string; unidad: string; linea: string }
 type Valores = Map<string, number[]>
@@ -202,8 +203,7 @@ async function armarPlantillaMultiple(
   cat: NonNullable<ReturnType<typeof useDatos>['cat']>,
 ): Promise<FilaPlantilla[]> {
   const cuentas = new Map(cat.cuentas.map(c => [c.cuenta, c]))
-  const resolver = crearResolverRubro(cat.mapeos, 'comercial')
-  const rubroNombre = new Map(cat.rubros.filter(r => r.vista === 'comercial').map(r => [r.codigo, r.nombre]))
+  const rubroDe = crearRubroDe(cuentas, cat.excepciones)
   const porCentro = new Map<string, Map<string, number[]>>()
   const refPorUnidad = new Map<string, Set<string>>()
   for (const r of datos) {
@@ -227,7 +227,7 @@ async function armarPlantillaMultiple(
     for (const cta of lista.sort()) {
       filas.push({
         sede: c.sede, unidad: c.unidad, linea: c.linea, cuenta: cta, nombre: cuentas.get(cta)?.nombre ?? '',
-        rubro: cuentas.get(cta)?.es_estadistica ? 'ESTADÍSTICA' : rubroNombre.get(resolver(cta, c.unidad) ?? '') ?? 'SIN CLASIFICAR',
+        rubro: cuentas.get(cta)?.es_estadistica ? 'ESTADÍSTICA' : rubroDe(cta, c.unidad) ?? 'SIN RUBRO',
         valores: m.get(cta) ?? ceros(),
       })
     }
@@ -320,24 +320,29 @@ function ImportarExcel({ esc, onCerrar, onCargado }: { esc: Escenario; onCerrar:
 }
 
 // =============================================================================== grilla de un centro
+type FilaGrilla =
+  | { tipo: 'fila'; f: FilaEERR; tieneHijos: boolean }
+  | { tipo: 'cuenta'; cuenta: string; nivel: number }
+
 function Grilla({ esc, escRef, centro: centroProp, onCambios, onVolver }: {
   esc: Escenario; escRef?: Escenario; centro: Sel; onCambios: (b: boolean) => void; onVolver: () => void
 }) {
   const { perfil, accesos, cat } = useDatos()
   // el padre crea un objeto nuevo en cada render; la grilla se monta por centro (key), así que lo fijamos
   const [centro] = useState(centroProp)
-  const [vista, setVista] = useState<Vista>('comercial')
-  const [todas, setTodas] = useState(false)
+  const [esquema, setEsquema] = useState<Esquema>('E1')
   const [valores, setValores] = useState<Valores | null>(null)
   const [originales, setOriginales] = useState<Valores>(new Map())
   const [ref, setRef] = useState<Valores>(new Map())
-  const [agregadas, setAgregadas] = useState<Set<string>>(new Set())
+  const [abiertos, setAbiertos] = useState<Set<string>>(new Set())
+  const [plegados, setPlegados] = useState<Set<string>>(new Set())
+  const [soloConDatos, setSoloConDatos] = useState(false)
   const [msg, setMsg] = useState<{ tipo: string; texto: string } | null>(null)
   const [guardando, setGuardando] = useState(false)
   const [importar, setImportar] = useState(false)
-  const [buscar, setBuscar] = useState('')
 
   const cuentas = useMemo(() => new Map(cat!.cuentas.map(c => [c.cuenta, c])), [cat])
+  const rubroDe = useMemo(() => crearRubroDe(cuentas, cat!.excepciones), [cuentas, cat])
   const editable = puedeEditar(perfil, accesos, esc, centro)
   const puedeCuenta = useCallback((cta: string) => puedeEditar(perfil, accesos, esc, centro, cta), [perfil, accesos, esc, centro])
 
@@ -381,25 +386,22 @@ function Grilla({ esc, escRef, centro: centroProp, onCambios, onVolver }: {
     return () => window.removeEventListener('beforeunload', h)
   }, [cambios.length])
 
-  // ---- estructura de filas
-  const resolver = useMemo(() => crearResolverRubro(cat!.mapeos, vista), [cat, vista])
+  // ---- cuentas de cada rubro (todas las cuentas del mapa, aunque no tengan datos)
   const cuentasPorRubro = useMemo(() => {
     const m = new Map<string, string[]>()
     for (const c of cat!.cuentas) {
       if (!c.activa || c.es_estadistica) continue
-      const r = resolver(c.cuenta, centro.unidad) ?? '__SIN'
+      const r = rubroDe(c.cuenta, centro.unidad)
+      if (!r) continue
       if (!m.has(r)) m.set(r, [])
       m.get(r)!.push(c.cuenta)
     }
     return m
-  }, [cat, resolver, centro.unidad])
+  }, [cat, rubroDe, centro.unidad])
+  const cuentasPorRubroRef = useRef(cuentasPorRubro)
+  cuentasPorRubroRef.current = cuentasPorRubro
 
-  const conDatos = (cta: string) =>
-    (valores?.get(cta)?.some(v => v !== 0) ?? false) || (ref.get(cta)?.some(v => v !== 0) ?? false) ||
-    (originales.get(cta)?.some(v => v !== 0) ?? false) || agregadas.has(cta)
-  const sinDatos = !!valores && ![...cuentas.keys()].some(conDatos)
-  const mostrarTodas = todas || sinDatos
-
+  // ---- reporte del centro con la forma del esquema: 12 meses + real del año anterior
   const reporte = useMemo(() => {
     if (!valores) return null
     const entradas = [...new Set([...valores.keys(), ...ref.keys()])].map(cta => {
@@ -407,76 +409,78 @@ function Grilla({ esc, escRef, centro: centroProp, onCambios, onVolver }: {
       const v = valores.get(cta) ?? ceros()
       return { cuenta: cta, unidad: centro.unidad, valores: [...v.map(x => x * s), suma(ref.get(cta) ?? []) * s] }
     })
-    return construirReporte({ rubros: cat!.rubros, vista, resolver, cuentas, entradas, columnas: 13, conCuentas: false })
-  }, [valores, ref, cuentas, cat, vista, resolver, centro.unidad])
+    return construirEsquema({ filas: cat!.esquemas, esquema, cuentas, rubroDe, entradas, columnas: 13 })
+  }, [valores, ref, cuentas, cat, esquema, rubroDe, centro.unidad])
 
-  // filas editables en orden de pantalla (para navegación con teclado y pegado)
-  const filtro = buscar.trim().toLowerCase()
-  const pasaFiltro = (cta: string) => !filtro || cta.includes(filtro) || (cuentas.get(cta)?.nombre.toLowerCase().includes(filtro) ?? false)
-  const orden: { tipo: 'rubro' | 'cuenta'; fila?: FilaReporte; cuenta?: string }[] = []
-  const editables: string[] = []
+  const conDatos = (cta: string) =>
+    (valores?.get(cta)?.some(v => v !== 0) ?? false) || (ref.get(cta)?.some(v => v !== 0) ?? false) ||
+    (originales.get(cta)?.some(v => v !== 0) ?? false)
+
+  // filas en pantalla: participaciones e impuesto a la renta no se presupuestan por centro
+  const filasEsq = (reporte?.filas ?? []).filter(f => f.tipo !== 'pct' && f.tipo !== 'manual' && f.tipo !== 'sin' &&
+    (!soloConDatos || f.tipo !== 'rubro' || f.valores.some(v => Math.abs(v) > 0.5) ||
+      (cuentasPorRubro.get(f.rubro ?? '') ?? []).some(c => conDatos(c) || valores?.get(c)?.some(Boolean))))
+  const orden: FilaGrilla[] = []
+  for (const { fila: f, tieneHijos } of filasVisibles(filasEsq, plegados)) {
+    orden.push({ tipo: 'fila', f, tieneHijos })
+    if (f.tipo === 'rubro' && abiertos.has(f.rubro!)) {
+      for (const c of cuentasPorRubro.get(f.rubro!) ?? []) orden.push({ tipo: 'cuenta', cuenta: c, nivel: f.nivel + 1 })
+    }
+  }
+  // filas editables en orden de pantalla (navegación con teclado y pegado): 'R:rubro' o 'C:cuenta'
   const volumen = [...cuentas.values()].filter(c => c.es_estadistica)
-  for (const c of volumen) editables.push(c.cuenta)
-  if (reporte) {
-    for (const f of reporte.filas) {
-      const lista = (cuentasPorRubro.get(f.rubro ?? '') ?? []).filter(c => (mostrarTodas || conDatos(c)) && pasaFiltro(c))
-      if (f.tipo === 'detalle' && !lista.length && !f.valores.some(v => Math.abs(v) > 0.5) && !mostrarTodas) continue
-      if (filtro && f.tipo === 'detalle' && !lista.length) continue
-      orden.push({ tipo: 'rubro', fila: f })
-      if (f.tipo === 'detalle' || f.tipo === 'sin') for (const c of lista) { orden.push({ tipo: 'cuenta', cuenta: c }); editables.push(c) }
-    }
-    if (!reporte.filas.some(f => f.tipo === 'sin')) {
-      const sinMapa = (cuentasPorRubro.get('__SIN') ?? []).filter(c => (mostrarTodas || conDatos(c)) && pasaFiltro(c))
-      for (const c of sinMapa) { orden.push({ tipo: 'cuenta', cuenta: c }); editables.push(c) }
-    }
+  const editables: string[] = [...volumen.map(c => `C:${c.cuenta}`)]
+  for (const o of orden) {
+    if (o.tipo === 'cuenta') editables.push(`C:${o.cuenta}`)
+    else if (o.f.tipo === 'rubro') editables.push(`R:${o.f.rubro}`)
   }
   const editablesRef = useRef(editables)
   editablesRef.current = editables
   const refRef = useRef(ref)
   refRef.current = ref
 
+  const ctasEditables = useCallback((rubro: string) => (cuentasPorRubroRef.current.get(rubro) ?? []).filter(puedeCuenta), [puedeCuenta])
+
   // ---- edición
-  const fijar = useCallback((fila: number, col: number, n: number) => {
-    const cta = editablesRef.current[fila]
-    if (!cta) return
-    setValores(prev => {
-      const m = new Map(prev!)
+  const aplicar = useCallback((m: Map<string, number[]>, clave: string, col: number, n: number) => {
+    const ref = refRef.current
+    if (clave.startsWith('C:')) {
+      const cta = clave.slice(2)
       const arr = [...(m.get(cta) ?? ceros())]
       if (col < 12) arr[col] = n
-      else {
-        // distribuir el total anual según la estacionalidad del año anterior (o en partes iguales)
-        const base = (refRef.current.get(cta) ?? ceros()).map(Math.abs)
-        const sb = suma(base)
-        let acum = 0
-        for (let i = 0; i < 12; i++) {
-          arr[i] = i < 11 ? Math.round((sb ? n * base[i] / sb : n / 12) * 100) / 100 : Math.round((n - acum) * 100) / 100
-          acum += arr[i]
-        }
-      }
+      else estacionalidad(n, ref.get(cta) ?? ceros()).forEach((v, i) => { arr[i] = v })
       m.set(cta, arr)
-      return m
-    })
-  }, [])
+      return
+    }
+    const ctas = ctasEditables(clave.slice(2))
+    if (col < 12) { repartirRubro(m, ref, ctas, cuentas, col, n); return }
+    // total anual del rubro: se reparte por la estacionalidad del rubro en el año anterior
+    const base = ceros()
+    for (const c of ctas) (ref.get(c) ?? []).forEach((v, i) => { base[i] += Math.abs(v) })
+    estacionalidad(n, base).forEach((v, i) => repartirRubro(m, ref, ctas, cuentas, i, v))
+  }, [ctasEditables, cuentas])
+
+  const fijar = useCallback((fila: number, col: number, n: number) => {
+    const clave = editablesRef.current[fila]
+    if (!clave) return
+    setValores(prev => { const m = new Map(prev!); aplicar(m, clave, col, n); return m })
+  }, [aplicar])
 
   const pegar = useCallback((fila: number, col: number, texto: string) => {
     const filas = texto.replace(/\r/g, '').split('\n').filter((l, i, a) => l !== '' || i < a.length - 1)
     setValores(prev => {
       const m = new Map(prev!)
       filas.forEach((linea, i) => {
-        const cta = editablesRef.current[fila + i]
-        if (!cta) return
-        const arr = [...(m.get(cta) ?? ceros())]
+        const clave = editablesRef.current[fila + i]
+        if (!clave) return
         linea.split('\t').forEach((t, j) => {
-          const c = col + j
-          if (c > 11) return
           const n = parseNumero(t)
-          if (n != null) arr[c] = n
+          if (n != null && col + j < 12) aplicar(m, clave, col + j, n)
         })
-        m.set(cta, arr)
       })
       return m
     })
-  }, [])
+  }, [aplicar])
 
   async function guardar() {
     if (!cambios.length) return
@@ -485,7 +489,7 @@ function Grilla({ esc, escRef, centro: centroProp, onCambios, onVolver }: {
     try {
       const filas = cambios.map(c => ({
         escenario_id: esc.id, anio: esc.anio, mes: c.mes, ...centro, cuenta: c.cuenta,
-        monto: Math.round(c.valor * signoCuenta(cuentas.get(c.cuenta)) * 100) / 100,
+        monto: r2(c.valor * signoCuenta(cuentas.get(c.cuenta))),
       }))
       await upsertEnLotes('ppto_montos', filas, { onConflict: 'escenario_id,anio,mes,sede,unidad,linea,cuenta' })
       setOriginales(new Map([...valores!].map(([k, a]) => [k, [...a]])))
@@ -505,34 +509,39 @@ function Grilla({ esc, escRef, centro: centroProp, onCambios, onVolver }: {
       const m = new Map(prev!)
       for (const [cta, arr] of ref) {
         if (!puedeCuenta(cta) || cuentas.get(cta)?.es_estadistica) continue
-        m.set(cta, arr.map(v => Math.round(v * (1 + p / 100) * 100) / 100))
+        m.set(cta, arr.map(v => r2(v * (1 + p / 100))))
       }
       return m
     })
   }
 
   function descargar() {
-    const filas: FilaPlantilla[] = editables.map(cta => ({
+    const ctas = [...new Set([...volumen.map(c => c.cuenta), ...[...cuentasPorRubro.values()].flat().filter(c => conDatos(c) || valores?.get(c)?.some(Boolean))])]
+    const filas: FilaPlantilla[] = ctas.map(cta => ({
       ...centro, cuenta: cta, nombre: cuentas.get(cta)?.nombre ?? '',
-      rubro: cat!.rubros.find(r => r.vista === 'comercial' && r.codigo === crearResolverRubro(cat!.mapeos, 'comercial')(cta, centro.unidad))?.nombre ?? '',
+      rubro: cuentas.get(cta)?.es_estadistica ? 'ESTADÍSTICA' : rubroDe(cta, centro.unidad) ?? 'SIN RUBRO',
       valores: valores?.get(cta) ?? ceros(),
     }))
     exportarPlantilla(filas, `PPTO_${esc.anio}_${centro.sede}_${centro.unidad}_${centro.linea}.xlsx`,
       `${esc.nombre} — ${nombreDe(cat!.sedes, centro.sede)} / ${nombreDe(cat!.unidades, centro.unidad)} / ${nombreDe(cat!.lineas, centro.linea)}`)
   }
 
-  const [nuevaCuenta, setNuevaCuenta] = useState('')
-  function agregarCuenta() {
-    const cta = nuevaCuenta.split(' ')[0]
-    if (!cuentas.has(cta)) return
-    setAgregadas(s => new Set(s).add(cta))
-    setNuevaCuenta('')
-  }
-
   if (!valores) return <div className="tarjeta">Cargando presupuesto…{msg && <div className="alerta error">{msg.texto}</div>}</div>
 
-  const totalFinal = reporte?.filas.filter(f => f.tipo === 'total').at(-1)
+  const totalFinal = reporte?.filas.find(f => f.etiqueta.startsWith('RESULTADO DEL EJERCICIO'))
   const anioRef = escRef?.anio ?? esc.anio - 1
+  const todasAbiertas = abiertos.size > 0
+  const alternarRubro = (r: string) => setAbiertos(s => { const n = new Set(s); if (n.has(r)) n.delete(r); else n.add(r); return n })
+  const alternarGrupo = (k: string) => setPlegados(s => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n })
+  const filaCeldas = (clave: string, v: number[], ed: boolean, r: number) => {
+    const fila = editables.indexOf(clave)
+    return <>
+      {v.map((x, i) => <td key={i}><Celda valor={x} editable={ed} fila={fila} col={i} onFijar={fijar} onPegar={pegar} /></td>)}
+      <td><Celda valor={suma(v)} editable={ed} fila={fila} col={12} onFijar={fijar} onPegar={pegar} total /></td>
+      <td className="n">{num(r)}</td>
+      <td className="n">{r ? pct(suma(v) / r - 1) : ''}</td>
+    </>
+  }
 
   return (
     <div className="tarjeta">
@@ -542,22 +551,15 @@ function Grilla({ esc, escRef, centro: centroProp, onCambios, onVolver }: {
         {!editable && <span className="chip">Solo lectura</span>}
         <div className="espacio" />
         <div className="segmentado">
-          <button className={vista === 'comercial' ? 'activo' : ''} onClick={() => setVista('comercial')}>Vista comercial</button>
-          <button className={vista === 'contable' ? 'activo' : ''} onClick={() => setVista('contable')}>Vista contable</button>
+          <button className={esquema === 'E1' ? 'activo' : ''} onClick={() => setEsquema('E1')}>Esquema 1</button>
+          <button className={esquema === 'E2' ? 'activo' : ''} onClick={() => setEsquema('E2')}>Esquema 2</button>
         </div>
       </div>
 
       <div className="barra herramientas">
-        <label className="check"><input type="checkbox" checked={mostrarTodas} disabled={sinDatos} onChange={e => setTodas(e.target.checked)} /> Mostrar todas las cuentas</label>
-        <input className="buscar" placeholder="Buscar cuenta…" value={buscar} onChange={e => setBuscar(e.target.value)} />
-        {editable && <>
-          <input list="lista-cuentas" className="buscar" placeholder="Agregar cuenta…" value={nuevaCuenta}
-            onChange={e => setNuevaCuenta(e.target.value)} onKeyDown={e => e.key === 'Enter' && agregarCuenta()} />
-          <datalist id="lista-cuentas">
-            {cat!.cuentas.filter(c => c.activa && !c.es_estadistica).map(c => <option key={c.cuenta} value={`${c.cuenta} ${c.nombre}`} />)}
-          </datalist>
-          <button onClick={agregarCuenta} disabled={!cuentas.has(nuevaCuenta.split(' ')[0])}>Agregar</button>
-        </>}
+        <button onClick={() => setAbiertos(todasAbiertas ? new Set() : new Set(filasEsq.filter(f => f.tipo === 'rubro').map(f => f.rubro!)))}>
+          {todasAbiertas ? 'Cerrar cuentas' : 'Abrir todas las cuentas'}</button>
+        <label className="check"><input type="checkbox" checked={soloConDatos} onChange={e => setSoloConDatos(e.target.checked)} /> Sólo rubros con datos</label>
         <div className="espacio" />
         {editable && escRef && <button onClick={copiarReal}>Copiar real {anioRef} + %</button>}
         <button onClick={descargar}>Descargar Excel</button>
@@ -569,15 +571,16 @@ function Grilla({ esc, escRef, centro: centroProp, onCambios, onVolver }: {
       {importar && <ImportarExcel esc={esc} onCerrar={() => setImportar(false)} onCargado={() => { setImportar(false); cargar() }} />}
       {msg && <div className={`alerta ${msg.tipo}`}>{msg.texto}</div>}
       <p className="ayuda">
-        Las cuentas se ingresan en <strong>positivo</strong> (ingresos y gastos); los subtotales muestran el resultado con signo (gastos entre paréntesis).
-        Puede pegar bloques copiados de Excel. Escriba en la columna <em>Total</em> para repartir el año según la estacionalidad de {anioRef}.
+        Digite por <strong>rubro</strong> (se reparte entre sus cuentas según lo ya presupuestado o el real {anioRef}) o abra el rubro con ▸ para
+        digitar <strong>por cuenta mayor</strong>. Los importes van en <strong>positivo</strong>; los subtotales muestran el resultado con signo
+        (gastos entre paréntesis). Puede pegar bloques de Excel; en la columna <em>Total</em> se reparte el año según la estacionalidad de {anioRef}.
       </p>
 
       <div className="scroll grilla-cont">
-        <table className="tabla grilla">
+        <table className="tabla grilla esquema">
           <thead>
             <tr>
-              <th className="fija">Cuenta / rubro</th>
+              <th className="fija">Rubro / cuenta</th>
               {MESES.map(m => <th key={m} className="n">{m}</th>)}
               <th className="n">Total {esc.anio}</th>
               <th className="n">Real {anioRef}</th>
@@ -585,47 +588,52 @@ function Grilla({ esc, escRef, centro: centroProp, onCambios, onVolver }: {
             </tr>
           </thead>
           <tbody>
-            {volumen.map(c => {
-              const v = valores.get(c.cuenta) ?? ceros()
-              const r = suma(ref.get(c.cuenta) ?? [])
-              const fila = editables.indexOf(c.cuenta)
-              return (
-                <tr key={c.cuenta} className="fila-vol">
-                  <td className="fija">{c.nombre}</td>
-                  {v.map((x, i) => <td key={i}><Celda valor={x} editable={editable} fila={fila} col={i} onFijar={fijar} onPegar={pegar} /></td>)}
-                  <td><Celda valor={suma(v)} editable={editable} fila={fila} col={12} onFijar={fijar} onPegar={pegar} total /></td>
-                  <td className="n">{num(r)}</td>
-                  <td className="n">{r ? pct(suma(v) / r - 1) : ''}</td>
-                </tr>
-              )
-            })}
-            {orden.map((o, idx) => {
-              if (o.tipo === 'rubro') {
-                const f = o.fila!
-                const tot = suma(f.valores.slice(0, 12)), r = f.valores[12]
+            {volumen.map(c => (
+              <tr key={c.cuenta} className="fila-vol">
+                <td className="fija">{c.nombre}</td>
+                {filaCeldas(`C:${c.cuenta}`, valores.get(c.cuenta) ?? ceros(), editable, suma(ref.get(c.cuenta) ?? []))}
+              </tr>
+            ))}
+            {orden.map(o => {
+              if (o.tipo === 'cuenta') {
+                const cta = o.cuenta
+                const v = valores.get(cta) ?? ceros()
+                const sucia = v.some((x, i) => Math.abs(x - (originales.get(cta)?.[i] ?? 0)) > 0.004)
                 return (
-                  <tr key={`r${idx}`} className={`fila-${f.tipo}`}>
-                    <td className="fija">{f.nombre}</td>
-                    {f.valores.slice(0, 12).map((x, i) => <td key={i} className="n">{num(x)}</td>)}
-                    <td className="n b">{num(tot)}</td>
-                    <td className="n">{num(r)}</td>
-                    <td className="n">{r ? pct(tot / r - 1) : ''}</td>
+                  <tr key={`c${cta}`} className={`fila-cuenta${sucia ? ' sucia' : ''}`}>
+                    <td className="fija" style={{ paddingLeft: 8 + o.nivel * 16 }} title={cta}><span className="cod">{cta}</span> {cuentas.get(cta)?.nombre}</td>
+                    {filaCeldas(`C:${cta}`, v, editable && puedeCuenta(cta), suma(ref.get(cta) ?? []))}
                   </tr>
                 )
               }
-              const cta = o.cuenta!
-              const v = valores.get(cta) ?? ceros()
-              const r = suma(ref.get(cta) ?? [])
-              const fila = editables.indexOf(cta)
-              const ed = editable && puedeCuenta(cta)
-              const sucia = v.some((x, i) => Math.abs(x - (originales.get(cta)?.[i] ?? 0)) > 0.004)
+              const { f, tieneHijos } = o
+              if (f.tipo === 'rubro') {
+                const ctas = cuentasPorRubro.get(f.rubro!) ?? []
+                const s = signoRubro(ctas.map(c => cuentas.get(c)))
+                const abierto = abiertos.has(f.rubro!)
+                const sucia = ctas.some(c => (valores.get(c) ?? []).some((x, i) => Math.abs(x - (originales.get(c)?.[i] ?? 0)) > 0.004))
+                return (
+                  <tr key={f.clave} className={`fila-e fila-rubro n${f.nivel}${f.negrita ? ' b' : ''}${sucia ? ' sucia' : ''}`}>
+                    <td className="fija" style={{ paddingLeft: 8 + f.nivel * 16 }}>
+                      <button className="link flecha" disabled={!ctas.length} onClick={() => alternarRubro(f.rubro!)}
+                        title={ctas.length ? (abierto ? 'Cerrar cuentas' : `Abrir ${ctas.length} cuenta(s)`) : 'Sin cuentas en el mapa'}>{ctas.length ? (abierto ? '▾' : '▸') : '·'}</button>
+                      {f.etiqueta}
+                    </td>
+                    {filaCeldas(`R:${f.rubro}`, f.valores.slice(0, 12).map(x => r2(x * s)), editable && ctas.length > 0 && ctas.every(puedeCuenta), f.valores[12] * s)}
+                  </tr>
+                )
+              }
+              const tot = suma(f.valores.slice(0, 12)), r = f.valores[12]
               return (
-                <tr key={`c${cta}`} className={`fila-cuenta${sucia ? ' sucia' : ''}`}>
-                  <td className="fija" title={cta}><span className="cod">{cta}</span> {cuentas.get(cta)?.nombre}</td>
-                  {v.map((x, i) => <td key={i}><Celda valor={x} editable={ed} fila={fila} col={i} onFijar={fijar} onPegar={pegar} /></td>)}
-                  <td><Celda valor={suma(v)} editable={ed} fila={fila} col={12} onFijar={fijar} onPegar={pegar} total /></td>
+                <tr key={f.clave} className={`fila-e fila-${f.tipo} n${f.nivel}${f.negrita ? ' b' : ''}${tieneHijos ? ' plegable' : ''}`}
+                  onClick={tieneHijos ? () => alternarGrupo(f.clave) : undefined}>
+                  <td className="fija" style={{ paddingLeft: 8 + f.nivel * 16 }}>
+                    <span className="flecha">{tieneHijos ? (plegados.has(f.clave) ? '▸' : '▾') : ''}</span>{f.etiqueta}
+                  </td>
+                  {f.valores.slice(0, 12).map((x, i) => <td key={i} className="n">{num(x)}</td>)}
+                  <td className="n b">{num(tot)}</td>
                   <td className="n">{num(r)}</td>
-                  <td className="n">{r ? pct(suma(v) / r - 1) : ''}</td>
+                  <td className="n">{r ? pct(tot / Math.abs(r) - Math.sign(r)) : ''}</td>
                 </tr>
               )
             })}
@@ -633,7 +641,7 @@ function Grilla({ esc, escRef, centro: centroProp, onCambios, onVolver }: {
           {totalFinal && (
             <tfoot>
               <tr>
-                <td className="fija">{totalFinal.nombre}</td>
+                <td className="fija">{totalFinal.etiqueta}</td>
                 {totalFinal.valores.slice(0, 12).map((x, i) => <td key={i} className="n">{num(x)}</td>)}
                 <td className="n b">{num(suma(totalFinal.valores.slice(0, 12)))}</td>
                 <td className="n">{num(totalFinal.valores[12])}</td>

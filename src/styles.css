@@ -159,3 +159,13 @@ label.check { flex-direction: row; align-items: center; gap: 6px; font-size: 13p
 .celda-ro { display: block; padding: 4px 6px; text-align: right; }
 .reporte td.n { min-width: 92px; }
 .vistas-reporte { margin: 10px 0; }
+
+/* esquemas 1 y 2 (mismo aspecto que el Excel: niveles, subtotales y totales) */
+.esquema th.pct, .esquema td.pct { color: var(--gris); font-size: 11px; min-width: 52px; }
+.esquema td.col-total, .esquema th.col-total { background: #f7f8fa; font-weight: 600; }
+.esquema tr.fila-e.b td { font-weight: 600; }
+.esquema tr.fila-grupo.n0 td { background: var(--seccion); font-weight: 700; }
+.esquema tr.fila-formula td { background: var(--total); font-weight: 700; border-top: 1px solid #c7cfdb; }
+.esquema tr.fila-pct td { font-style: italic; color: var(--gris); font-size: 12px; }
+.esquema tr.fila-manual td { font-style: italic; }
+.esquema tr.fila-rubro.n2 td, .esquema tr.fila-rubro.n1 td { color: #3a4150; }

@@ -11,12 +11,35 @@ financiera). Responder en español. Ver `README.md` para módulos, roles y conve
   no editar los ya aplicados.
 - Antes de hacer push a GitHub, decir qué se va a subir. Para web (GitHub, Supabase) usar Chrome (Claude in Chrome).
 
-## Estado actual (2026-11-05)
+## Modelo vigente (desde 09/11/2026): mapa único + Esquema 1 y Esquema 2
+
+Fuente: `Modelo EERR1 incamotors noviembre.xlsx` (carpeta superior). Lo convierte `scripts/generar_modelo.py` en
+`supabase/datos_005_modelo.sql` (rubros, mapa, filas de esquemas, participaciones e IR 2026). Regenerar y volver a
+ejecutar si cambia el Excel.
+
+- **Mapa de cuentas** (`cuentas.nombre`, `cuentas.rubro`): un solo rubro por cuenta para todas las sedes, unidades,
+  líneas y marcas, en real y presupuesto. Única excepción por unidad (`mapa_excepciones`): 7599100 en UNI = INCENTIVO
+  FUERZA DE VENTAS (en el Excel la cuenta está partida a mano en dos filas). Editable en la página *Mapa de cuentas*.
+- **Esquemas** (`esquema_filas`): filas tipo grupo (suma de hijas), rubro, formula (suma/resta de filas), pct, manual;
+  niveles 0/1/2 como las agrupaciones del Excel. E1 = ER clásico; E2 = utilidad bruta por línea de negocio. Corregidas
+  dos etiquetas mal copiadas del Excel (E2 fila 12 "UNIDADES -", fila 58 "POST VENTA - UTILIDAD BRUTA") y agregado el
+  rubro OTROS INGRESOS Y GASTOS (7599101) que el Excel no sumaba.
+- **Motor** `src/lib/esquema.ts`: probado contra el Excel (ene–set, cuadra todas las filas; sólo −15 soles de 7599101).
+- **Participaciones e IR** (`montos_empresa`): sólo en el total de la empresa (reporte sin filtros); sólo admin/contab.
+- **Empresa** (`lineas.empresa`): Nova Autos = Chevrolet e Isuzu (hoy sólo existe CHEVROL); Incamotors = resto.
+- **Presupuesto**: grilla por rubro con la forma del esquema; cada rubro se abre en sus cuentas. Lo digitado en el rubro
+  se reparte entre sus cuentas (`src/lib/reparto.ts`): según lo ya presupuestado, si no según el real del año anterior.
+- Las vistas contable/comercial, la vista consolidada/general y los factores de distribución quedaron fuera de la app
+  (sus tablas `rubros`, `mapeo_cuentas`, `consolidado_secciones`, `factores_distribucion` se conservan sin uso).
+- Comparativo 2025: pospuesto por pedido de Daniel (primero presupuesto y real 2026).
+
+## Estado anterior (2026-11-05)
 
 - **Web:** https://danieldavilacuadros.github.io/eerr-ppto/ (GitHub Pages, se publica con cada push a `main`).
 - **Repositorio:** https://github.com/danieldavilacuadros/eerr-ppto (público; plan GitHub Free).
 - **Supabase:** proyecto `eerr-ppto`, ref `tbjhilyaihzpkrignfkk`, región São Paulo, organización "Incamotors" (plan Free).
-  - Migraciones aplicadas: `001_esquema`, `seed`, `002_extra_libros`, `003_distribucion_y_sap`, `004_rendimiento_rls`.
+  - Migraciones aplicadas: `001_esquema`, `seed`, `002_extra_libros`, `003_distribucion_y_sap`, `004_rendimiento_rls`,
+    `005_esquemas` + `datos_005_modelo.sql` (09/11/2026).
   - Usuario `daniel.davila@incamotors.pe` con rol `admin`. Auth › URL Configuration apunta a GitHub Pages.
 - **Secretos GitHub:** existe `VITE_SUPABASE_ANON_KEY`. La URL va por defecto en `.github/workflows/deploy.yml`.
 - **PC de Daniel (esta):** Node 26 LTS, `.env.local` con la Publishable key (no la secreta), VPN FortiClient para SAP.
@@ -33,17 +56,14 @@ financiera). Responder en español. Ver `README.md` para módulos, roles y conve
 - Fuente del ER: `ER X LINEAS DE NEGOCIO SETIEMBRE 2026-D.R_OK1.xlsx` (correo de Jorge Castro, 15/10/2026). Su hoja
   `CONTROL SEP.26` define cómo contabilidad asigna SAP a cada hoja; las reglas están replicadas en el script de carga.
 
-### Módulos nuevos
+### Módulos
 
 - **Registro extra libros** (contabilidad/admin): grilla con la forma del "Modelo Registro Extra Libros" (sede, unidad,
   línea, cuenta, enero…diciembre), pegar desde Excel y cargar/descargar el Excel. Se suma al real en los reportes.
-- **Estados de resultados:** botones *Vista completa por cuenta contable*, *Vista resumida por rubros* y *Vista
-  consolidada* (Ingresos, Costos, Margen bruto, Gastos, Margen de contribución). Con Línea comercial, Unidad y Línea en
-  "Todas" la consolidada pasa a **vista general**: una columna por línea de negocio hasta el Resultado Operativo Neto,
-  con gastos generales y TC repartidos por factor (último factor disponible para meses sin factor). Secciones y rubros
-  plegables.
-- **Mapeo de cuentas:** además del rubro de cada cuenta (filtro "Solo sin clasificar"), tarjeta *Agrupación de la vista
-  consolidada* (tabla `consolidado_secciones`).
+- **Estados de resultados:** Esquema 1 / Esquema 2, enero hasta el mes elegido + total, columnas %, agrupar por nivel
+  (botones 1, 2, 3 como el Excel) o por fila, ver cuentas mayores, filtros línea de negocio/unidad/sede/marca/empresa,
+  soles o dólares (por TC), exportar a Excel con las agrupaciones.
+- **Mapa de cuentas:** nombre y rubro de cada cuenta, excepciones por unidad, catálogo de rubros.
 - **Carga real:** botón "Actualizar desde SAP" que pide sólo el último mes cerrado, una vez al día (tabla `sap_pedidos`).
 
 ### Vínculo con SAP
@@ -69,16 +89,19 @@ financiera). Responder en español. Ver `README.md` para módulos, roles y conve
 
 ## Pendientes
 
-1. Confirmar con contabilidad el nombre y el rubro de 6861900, y que la vista general ya no muestre "sin clasificar".
+1. Revisar en la web el Esquema 1 y 2 con el real 2026 y el presupuesto por rubro. El real de la plataforma (SAP + extra
+   libros = 35.88 M ene–set) difiere del mapa del Excel (35.81 M) por cómo se armaron los extra libros.
+   Confirmar con contabilidad el nombre y el rubro de 6861900.
 2. Botón "Actualizar desde SAP" probado el 06/11/2026: octubre 2026 = 3,459 filas, S/ 5,761,433.18 (sólo SAP, sin extra
    libros; en línea con jul–ago). Trajo 5 cuentas nuevas, mapeadas copiando a una hermana: 6551100←6551300,
    6911124←6911107, 6941095←6941094, 7011124←7011107, 7411107←7411118. Cada mes nuevo puede traer cuentas nuevas:
-   revisar *Mapeo de cuentas* › "Solo sin clasificar" después de cada carga.
+   revisar *Mapa de cuentas* › "Solo sin rubro" después de cada carga.
 3. Pedir a Jorge Castro su registro extra libros mensual 2026 (formato del modelo) para reemplazar los calculados.
 4. Invitar a los jefes (Supabase › Auth › Invite user) y asignarles rol y accesos en *Usuarios*.
 5. No se ha recibido archivo de PPTO 2027; si llega, adaptar la importación.
 6. Revisar mapeos asignados por regla general (p. ej. 6281100 Retribuciones al directorio, 7011191/7011102 en ACC).
-7. Validar con contabilidad el factor de distribución para meses nuevos (hoy usa el último factor disponible).
+7. Definir si los gastos generales (unidad GEN) se reparten a las líneas en el Esquema 2 (antes: factores de distribución).
+8. Editor de esquemas en la app (hoy las filas se cambian regenerando desde el Excel).
 
 ## Trabajo local
 

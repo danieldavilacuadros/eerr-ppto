@@ -1,8 +1,9 @@
 # Incamotors · EERR y Presupuesto
 
 Plataforma web para que cada líder de área revise sus estados de resultados (real 2026, real 2027) y cargue el
-presupuesto 2027 por **sede · unidad de negocio · línea/marca · cuenta mayor · mes**, con vista **contable** (ERI)
-y vista **comercial** (ER por línea de negocio) que siempre cuadran entre sí.
+presupuesto 2027 por **sede · unidad de negocio · línea/marca · cuenta mayor · mes**. Cada cuenta mayor va a un rubro
+(un solo mapa para toda la empresa) y los reportes se arman con el **Esquema 1** (ER de la empresa) y el **Esquema 2**
+(utilidad bruta por línea de negocio), con las mismas agrupaciones y subtotales del Excel del modelo.
 
 - Frontend: React + Vite (sitio estático, publicado en GitHub Pages)
 - Base de datos, usuarios y seguridad: Supabase (Postgres + Auth + Row Level Security)
@@ -12,10 +13,10 @@ y vista **comercial** (ER por línea de negocio) que siempre cuadran entre sí.
 | Módulo | Quién | Qué hace |
 |---|---|---|
 | Carga de presupuesto | jefes, admin | Grilla por centro (sede/unidad/marca) con 12 meses, referencia real del año anterior y variación. Pegar desde Excel, repartir un total anual según la estacionalidad, copiar el real + %, descargar/cargar plantilla Excel de todos sus centros. |
-| Estados de resultados | todos | Mes a mes, un mes, acumulado o año; comparativo contra otro escenario; vista contable o comercial; detalle por cuenta mayor; soles o dólares; exportar a Excel. Indicador de cuadre contable vs comercial. |
+| Estados de resultados | todos | Esquema 1 o 2, de enero al mes elegido con total y %; agrupar por niveles; detalle por cuenta mayor; filtros por línea de negocio, unidad, sede, marca y empresa (Incamotors / Nova Autos); soles o dólares; exportar a Excel con agrupaciones. |
 | Ajustes y provisiones | contabilidad | Provisiones, reclasificaciones (suma cero) y asignaciones sobre cuentas mayores y centros. |
 | Carga real (SAP) | contabilidad | Sube el detalle contable del mes (año, mes, sede, unidad, línea, cuenta, importe) y reemplaza esos meses. |
-| Mapeo de cuentas | contabilidad | Define a qué rubro contable y comercial va cada cuenta mayor (y excepciones por unidad). |
+| Mapa de cuentas | contabilidad | Nombre a mostrar y rubro de cada cuenta mayor; excepciones por unidad; catálogo de rubros. |
 | Usuarios y accesos | admin | Rol de cada usuario y su alcance (sede / unidad / línea / prefijo de cuenta, con o sin edición). Escenarios abiertos/cerrados. |
 
 ### Roles
@@ -39,7 +40,9 @@ La seguridad se aplica en la base de datos (RLS): aunque alguien manipule la web
 1. Cree un proyecto en https://supabase.com (región São Paulo recomendada).
 2. En **SQL Editor** ejecute, en este orden:
    - `supabase/migrations/001_esquema.sql`
-   - `supabase/seed.sql` (cuentas, estructura contable y comercial, sedes, unidades, marcas, centros y tipo de cambio 2026)
+   - `supabase/seed.sql` (cuentas, sedes, unidades, marcas, centros y tipo de cambio 2026)
+   - `002`, `003`, `004` y `005_esquemas.sql` de `supabase/migrations/`
+   - `supabase/datos_005_modelo.sql` (mapa de cuentas y esquemas, generado con `scripts/generar_modelo.py`)
 3. En **Authentication › Users › Add user / Invite user** cree su usuario.
 4. Hágase administrador (SQL Editor):
    ```sql
@@ -72,11 +75,13 @@ npm run dev
   ```bash
   python scripts/generar_seed.py "Incamotors_EEFF_Ene-Set_25vs26 (NUEVO MODELO).xlsx" "ER X LINEAS DE NEGOCIO SETIEMBRE 2026.xlsx"
   ```
-  - Vista contable: hoja `2026` (ERI1/ERI2) presentada como `ERI_SOLES`.
-  - Vista comercial: plantilla de rubros de las hojas por línea (col. A = cuentas) + reglas por familia de cuenta.
+  - (Histórico) Las vistas contable/comercial ya no se usan; el modelo vigente sale de `scripts/generar_modelo.py`:
+    ```bash
+    python scripts/generar_modelo.py "Modelo EERR1 incamotors noviembre.xlsx" supabase/datos_005_modelo.sql
+    ```
   - Centros sede/unidad/línea: hoja `CONTROL SEP.26`.
 
 ## Pendientes conocidos
 - Distribución automática de gastos generales a las líneas (factor de distribución) — hoy GEN se ve como su propia unidad.
 - Carga del real 2026 enero–setiembre: requiere la base de datos SAP con sede/unidad/línea por movimiento (formato de *Carga real*).
-- Revisar en *Mapeo de cuentas* las cuentas asignadas por regla general (p. ej. 6281100 Retribuciones al directorio).
+- Revisar en *Mapa de cuentas* las cuentas asignadas por regla general (p. ej. 6281100 Retribuciones al directorio).

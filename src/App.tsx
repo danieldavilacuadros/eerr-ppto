@@ -63,7 +63,7 @@ export default function App() {
           {contab && <NavLink to="/extra-libros">Registro extra libros</NavLink>}
           {contab && <NavLink to="/ajustes">Ajustes y provisiones</NavLink>}
           {contab && <NavLink to="/carga-real">Carga real (SAP)</NavLink>}
-          {contab && <NavLink to="/mapeos">Mapeo de cuentas</NavLink>}
+          {contab && <NavLink to="/mapeos">Mapa de cuentas</NavLink>}
           {esRol(perfil, 'admin') && <div className="nav-titulo">Administración</div>}
           {esRol(perfil, 'admin') && <NavLink to="/usuarios">Usuarios y accesos</NavLink>}
         </nav>

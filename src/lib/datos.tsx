@@ -2,8 +2,10 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import type { Session } from '@supabase/supabase-js'
 import { supabase, traerTodo } from './supabase'
 import type {
-  Acceso, Centro, Cuenta, Escenario, Linea, LineaComercial, Mapeo, Perfil, Rubro, Sede, TipoCambio, Unidad, Vista,
+  Acceso, Centro, Cuenta, Escenario, FilaEsquema, Linea, LineaComercial, Perfil, RubroEERR, Sede, TipoCambio, Unidad,
 } from './tipos'
+
+export interface Excepcion { cuenta: string; unidad: string; rubro: string }
 
 export interface Catalogos {
   sedes: Sede[]
@@ -12,8 +14,9 @@ export interface Catalogos {
   lineas: Linea[]
   centros: Centro[]
   cuentas: Cuenta[]
-  rubros: Rubro[]
-  mapeos: Mapeo[]
+  rubros: RubroEERR[]
+  excepciones: Excepcion[]
+  esquemas: FilaEsquema[]
   escenarios: Escenario[]
   tipoCambio: TipoCambio[]
 }
@@ -53,7 +56,7 @@ export function DatosProvider({ children }: { children: ReactNode }) {
     setError(null)
     try {
       const uid = s.user.id
-      const [p, a, sedes, lineasComerciales, unidades, lineas, centros, cuentas, rubros, mapeos, escenarios, tipoCambio] =
+      const [p, a, sedes, lineasComerciales, unidades, lineas, centros, cuentas, rubros, excepciones, esquemas, escenarios, tipoCambio] =
         await Promise.all([
           supabase.from('perfiles').select('*').eq('id', uid).maybeSingle(),
           supabase.from('accesos').select('*').eq('perfil_id', uid),
@@ -63,15 +66,16 @@ export function DatosProvider({ children }: { children: ReactNode }) {
           tabla<Linea>('lineas', 'nombre'),
           tabla<Centro>('centros'),
           tabla<Cuenta>('cuentas', 'cuenta'),
-          tabla<Rubro>('rubros', 'orden'),
-          tabla<Mapeo>('mapeo_cuentas'),
+          tabla<RubroEERR>('rubros_eerr', 'orden'),
+          tabla<Excepcion>('mapa_excepciones'),
+          tabla<FilaEsquema>('esquema_filas', 'orden'),
           tabla<Escenario>('escenarios', 'anio'),
           tabla<TipoCambio>('tipo_cambio'),
         ])
       if (p.error) throw new Error(p.error.message)
       setPerfil(p.data as Perfil | null)
       setAccesos((a.data ?? []) as Acceso[])
-      setCat({ sedes, lineasComerciales, unidades, lineas, centros, cuentas, rubros, mapeos, escenarios, tipoCambio })
+      setCat({ sedes, lineasComerciales, unidades, lineas, centros, cuentas, rubros, excepciones, esquemas, escenarios, tipoCambio })
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -125,18 +129,4 @@ export function nombreDe<T extends { codigo: string; nombre: string }>(lista: T[
   return lista?.find(x => x.codigo === codigo)?.nombre ?? codigo
 }
 
-/** Devuelve el rubro de una cuenta en la vista indicada (con excepción por unidad si existe). */
-export function crearResolverRubro(mapeos: Mapeo[], vista: Vista) {
-  const porDefecto = new Map<string, string>()
-  const porUnidad = new Map<string, string>()
-  for (const m of mapeos) {
-    if (m.vista !== vista) continue
-    if (m.unidad) porUnidad.set(`${m.cuenta}|${m.unidad}`, m.rubro)
-    else porDefecto.set(m.cuenta, m.rubro)
-  }
-  return (cuenta: string, unidad: string): string | null =>
-    porUnidad.get(`${cuenta}|${unidad}`) ?? porDefecto.get(cuenta) ?? null
-}
-
-/** Signo con el que se presenta una cuenta: ingresos (+), gastos (−). */
-export const signoCuenta = (c: Cuenta | undefined) => (c?.clase === '6' ? -1 : 1)
+export { signoCuenta } from './reparto'

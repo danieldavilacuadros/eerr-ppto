@@ -23,7 +23,7 @@ export default function Inicio() {
         </Link>
         <Link to="/reportes" className="tarjeta accion">
           <h3>Estados de resultados</h3>
-          <p>Real vs presupuesto por mes, acumulado o año, en vista contable o comercial.</p>
+          <p>Esquema 1 (empresa) y Esquema 2 (por línea de negocio), mes a mes y acumulado, por sede, línea, marca o empresa.</p>
         </Link>
       </div>
 
