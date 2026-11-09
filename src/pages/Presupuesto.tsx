@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Celda } from '../components/Celda'
 import { cuentasDeVista, nombreDe, puedeEditar, puedeVer, signoCuenta, traerVistaCuentas, useDatos, type VistaCuenta } from '../lib/datos'
 import { MESES, ceros, num, parseNumero, pct, suma } from '../lib/formato'
-import { construirEsquema, crearRubroDe, filasVisibles, type FilaEERR } from '../lib/esquema'
+import { construirEsquema, crearRubroDe, filasVisibles, padresAgrupacion, type FilaEERR } from '../lib/esquema'
 import { estacionalidad, r2, repartirRubro, signoRubro } from '../lib/reparto'
 import { supabase, traerTodo, upsertEnLotes } from '../lib/supabase'
 import { exportarPlantilla, leerPlantilla, type FilaPlantilla } from '../lib/excel'
@@ -341,6 +341,8 @@ function Grilla({ esc, escRef, centro: centroProp, onCambios, onVolver }: {
   const [abiertos, setAbiertos] = useState<Set<string>>(new Set())
   const [plegados, setPlegados] = useState<Set<string>>(new Set())
   const [soloConDatos, setSoloConDatos] = useState(false)
+  // "Según vistas": estructura del Esquema 1 con sólo los rubros y cuentas configurados en *Vistas de presupuesto*
+  const [segunVistas, setSegunVistas] = useState(false)
   const [msg, setMsg] = useState<{ tipo: string; texto: string } | null>(null)
   const [guardando, setGuardando] = useState(false)
   const [importar, setImportar] = useState(false)
@@ -397,7 +399,10 @@ function Grilla({ esc, escRef, centro: centroProp, onCambios, onVolver }: {
   const ctasVista = useMemo(() => cuentasDeVista(cat!.unidadCuentas, excVista, centro), [cat, excVista, centro])
   const cuentasPorRubro = useMemo(() => {
     const m = new Map<string, string[]>()
-    const conMonto = (cta: string) => (originales.get(cta)?.some(v => v !== 0) ?? false) || (ref.get(cta)?.some(v => v !== 0) ?? false)
+    // fuera de la vista sólo se muestran cuentas con montos; en "Según vistas", sólo las que ya tienen presupuesto
+    // grabado (para no esconder lo digitado)
+    const conMonto = (cta: string) => (originales.get(cta)?.some(v => v !== 0) ?? false) ||
+      (!segunVistas && (ref.get(cta)?.some(v => v !== 0) ?? false))
     for (const c of cat!.cuentas) {
       if (!c.activa || c.es_estadistica) continue
       if (ctasVista && !ctasVista.has(c.cuenta) && !conMonto(c.cuenta)) continue
@@ -407,7 +412,7 @@ function Grilla({ esc, escRef, centro: centroProp, onCambios, onVolver }: {
       m.get(r)!.push(c.cuenta)
     }
     return m
-  }, [cat, rubroDe, centro.unidad, ctasVista, originales, ref])
+  }, [cat, rubroDe, centro.unidad, ctasVista, originales, ref, segunVistas])
   const cuentasPorRubroRef = useRef(cuentasPorRubro)
   cuentasPorRubroRef.current = cuentasPorRubro
 
@@ -429,7 +434,21 @@ function Grilla({ esc, escRef, centro: centroProp, onCambios, onVolver }: {
   // filas en pantalla: participaciones e impuesto a la renta no se presupuestan por centro
   // la agrupación se calcula con todas las filas del esquema (incluidas las de %), que luego no se muestran
   const filasEsq = (reporte?.filas ?? []).filter(f => f.tipo !== 'sin')
-  const mostrar = (f: FilaEERR) => f.tipo !== 'pct' && f.tipo !== 'manual' &&
+  // "Según vistas": rubros con cuentas en la vista y los grupos que los contienen; las fórmulas (totales) se mantienen
+  const ocultasVista = new Set<string>()
+  if (segunVistas) {
+    const padres = padresAgrupacion(filasEsq)
+    const conVisible = new Set<number>()
+    filasEsq.forEach((f, i) => {
+      if (f.tipo !== 'rubro' || !(cuentasPorRubro.get(f.rubro ?? '') ?? []).length) return
+      for (let p = padres[i]; p != null; p = padres[p]) conVisible.add(p)
+    })
+    filasEsq.forEach((f, i) => {
+      if ((f.tipo === 'rubro' && !(cuentasPorRubro.get(f.rubro ?? '') ?? []).length) || (f.tipo === 'grupo' && !conVisible.has(i)))
+        ocultasVista.add(f.clave)
+    })
+  }
+  const mostrar = (f: FilaEERR) => f.tipo !== 'pct' && f.tipo !== 'manual' && !ocultasVista.has(f.clave) &&
     (!soloConDatos || f.tipo !== 'rubro' || f.valores.some(v => Math.abs(v) > 0.5) ||
       (cuentasPorRubro.get(f.rubro ?? '') ?? []).some(c => conDatos(c) || valores?.get(c)?.some(Boolean)))
   const orden: FilaGrilla[] = []
@@ -563,8 +582,10 @@ function Grilla({ esc, escRef, centro: centroProp, onCambios, onVolver }: {
         {!editable && <span className="chip">Solo lectura</span>}
         <div className="espacio" />
         <div className="segmentado">
-          <button className={esquema === 'E1' ? 'activo' : ''} onClick={() => setEsquema('E1')}>Esquema 1</button>
-          <button className={esquema === 'E2' ? 'activo' : ''} onClick={() => setEsquema('E2')}>Esquema 2</button>
+          <button className={esquema === 'E1' && !segunVistas ? 'activo' : ''} onClick={() => { setEsquema('E1'); setSegunVistas(false) }}>Esquema 1</button>
+          <button className={esquema === 'E2' && !segunVistas ? 'activo' : ''} onClick={() => { setEsquema('E2'); setSegunVistas(false) }}>Esquema 2</button>
+          <button className={segunVistas ? 'activo' : ''} title="Sólo los rubros y cuentas configurados para esta vista en Vistas de presupuesto"
+            onClick={() => { setEsquema('E1'); setSegunVistas(true) }}>Según vistas</button>
         </div>
       </div>
 
