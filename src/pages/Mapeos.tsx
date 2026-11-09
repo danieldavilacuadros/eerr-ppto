@@ -116,11 +116,13 @@ export default function Mapeos() {
         </div>
       </div>
 
-      <div className="dos-columnas">
+      <ReglasUnidad />
+
+      <div className="columnas-iguales">
         <div className="tarjeta">
           <h3>Excepciones por unidad de negocio</h3>
           <p className="sub">Sólo para cuentas que en una unidad van a otro rubro (ej. 7599100 en Venta de unidades = Incentivo fuerza de ventas).</p>
-          <table className="tabla simple">
+          <table className="tabla simple ajustada">
             <thead><tr><th>Cuenta</th><th>Unidad</th><th>Rubro</th><th /></tr></thead>
             <tbody>
               {cat.excepciones.map(x => (
@@ -142,8 +144,6 @@ export default function Mapeos() {
             </tfoot>
           </table>
         </div>
-
-        <ReglasUnidad />
 
         <div className="tarjeta">
           <h3>Rubros ({cat.rubros.length})</h3>
@@ -206,7 +206,7 @@ function ReglasUnidad() {
       <p className="sub">Cuando SAP registra un rubro en una unidad que no es la de su negocio (ej. compra de GPS en Venta de unidades), los
         reportes lo muestran en la unidad de destino, con la misma sede y marca. SAP no se modifica y el total de la empresa no cambia.</p>
       {msg && <div className="alerta">{msg}</div>}
-      <table className="tabla simple">
+      <table className="tabla simple ajustada">
         <thead><tr><th>Rubro</th><th>Registrado en</th><th>Se muestra en</th><th>Activa</th><th /></tr></thead>
         <tbody>
           {reglas.map(r => (
