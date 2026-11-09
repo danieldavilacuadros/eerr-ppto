@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { esRol, puedeVer, useDatos } from '../lib/datos'
 import { MESES, num, pct } from '../lib/formato'
-import { construirEsquema, crearRubroDe, filasVisibles, type Entrada, type FilaEERR } from '../lib/esquema'
+import { construirEsquema, crearRubroDe, filasVisibles, padresAgrupacion, type Entrada, type FilaEERR } from '../lib/esquema'
 import { supabase, traerTodo } from '../lib/supabase'
 import { exportarTabla } from '../lib/excel'
 import type { Esquema, Monto, MontoEmpresa } from '../lib/tipos'
@@ -112,18 +112,16 @@ export default function Reportes() {
   if (!cat) return null
   const columnas = [...MESES.slice(0, nMeses).map(m => `${m} ${a?.anio ?? ''}`), `Total ${MESES[0]}–${MESES[nMeses - 1]}`]
   const maxNivel = Math.max(0, ...(rep?.filas.map(f => f.nivel) ?? [0]))
-  const vis = rep ? filasVisibles(rep.filas, plegados, nivelMax) : []
-  const alternar = (f: FilaEERR) => {
-    if (f.nivel >= nivelMax) {
-      // fila agrupada por el botón de nivel: se abre sólo ésta y las demás de ese nivel quedan agrupadas
-      const otras = (rep?.filas ?? []).filter((x, i, arr) => x.clave !== f.clave && x.nivel >= nivelMax && (arr[i + 1]?.nivel ?? -1) > x.nivel)
-      setPlegados(new Set(otras.map(x => x.clave)))
-      setNivelMax(99)
-      return
-    }
+  const vis = rep ? filasVisibles(rep.filas, plegados) : []
+  const alternar = (f: FilaEERR) =>
     setPlegados(p => { const s = new Set(p); if (s.has(f.clave)) s.delete(f.clave); else s.add(f.clave); return s })
+  // botones 1, 2, 3…: cierran las filas que agrupan a filas de mayor nivel que el elegido
+  const verNivel = (n: number) => {
+    setNivelMax(n)
+    if (!rep) return
+    const padres = padresAgrupacion(rep.filas)
+    setPlegados(new Set(rep.filas.flatMap((f, i) => (f.nivel > n && padres[i] != null ? [rep.filas[padres[i]!].clave] : []))))
   }
-  const verNivel = (n: number) => { setNivelMax(n); setPlegados(new Set()) }
   const conManuales = cat.esquemas.some(f => f.esquema === esquema && f.tipo === 'manual')
   const puedeVerEmpresa = esRol(perfil, 'admin', 'contabilidad')
 
@@ -165,7 +163,7 @@ export default function Reportes() {
           <p className="sub">{ESQUEMAS.find(e => e.codigo === esquema)?.ayuda} · {moneda === 'PEN' ? 'Soles' : 'Dólares'}{miles ? ' (miles)' : ''}</p>
         </div>
         <div className="segmentado">
-          {ESQUEMAS.map(e => <button key={e.codigo} className={esquema === e.codigo ? 'activo' : ''} onClick={() => { setEsquema(e.codigo); setPlegados(new Set()) }}>{e.nombre}</button>)}
+          {ESQUEMAS.map(e => <button key={e.codigo} className={esquema === e.codigo ? 'activo' : ''} onClick={() => { setEsquema(e.codigo); setPlegados(new Set()); setNivelMax(99) }}>{e.nombre}</button>)}
         </div>
       </div>
 
@@ -258,7 +256,7 @@ export default function Reportes() {
                   </tr>
                 )}
                 {vis.map(({ fila: f, tieneHijos }) => {
-                  const cerrado = plegados.has(f.clave) || f.nivel >= nivelMax
+                  const cerrado = plegados.has(f.clave)
                   return (
                     <tr key={f.clave} className={`fila-e fila-${f.tipo} n${f.nivel}${f.negrita ? ' b' : ''}${tieneHijos ? ' plegable' : ''}`}
                       onClick={tieneHijos ? () => alternar(f) : undefined}

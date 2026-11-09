@@ -417,11 +417,13 @@ function Grilla({ esc, escRef, centro: centroProp, onCambios, onVolver }: {
     (originales.get(cta)?.some(v => v !== 0) ?? false)
 
   // filas en pantalla: participaciones e impuesto a la renta no se presupuestan por centro
-  const filasEsq = (reporte?.filas ?? []).filter(f => f.tipo !== 'pct' && f.tipo !== 'manual' && f.tipo !== 'sin' &&
+  // la agrupación se calcula con todas las filas del esquema (incluidas las de %), que luego no se muestran
+  const filasEsq = (reporte?.filas ?? []).filter(f => f.tipo !== 'sin')
+  const mostrar = (f: FilaEERR) => f.tipo !== 'pct' && f.tipo !== 'manual' &&
     (!soloConDatos || f.tipo !== 'rubro' || f.valores.some(v => Math.abs(v) > 0.5) ||
-      (cuentasPorRubro.get(f.rubro ?? '') ?? []).some(c => conDatos(c) || valores?.get(c)?.some(Boolean))))
+      (cuentasPorRubro.get(f.rubro ?? '') ?? []).some(c => conDatos(c) || valores?.get(c)?.some(Boolean)))
   const orden: FilaGrilla[] = []
-  for (const { fila: f, tieneHijos } of filasVisibles(filasEsq, plegados)) {
+  for (const { fila: f, tieneHijos } of filasVisibles(filasEsq, plegados).filter(x => mostrar(x.fila))) {
     orden.push({ tipo: 'fila', f, tieneHijos })
     if (f.tipo === 'rubro' && abiertos.has(f.rubro!)) {
       for (const c of cuentasPorRubro.get(f.rubro!) ?? []) orden.push({ tipo: 'cuenta', cuenta: c, nivel: f.nivel + 1 })

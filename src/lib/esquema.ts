@@ -123,21 +123,32 @@ export function construirEsquema(opts: {
 }
 
 /**
- * Agrupación como en el Excel: una fila oculta las siguientes de mayor nivel hasta la próxima de su nivel o menor.
- * Devuelve las filas visibles según los plegados y el nivel máximo mostrado (botones 1, 2, 3… del Excel).
+ * Fila dueña de cada fila para agrupar, como las agrupaciones del Excel: un bloque de filas de mayor nivel cuelga de
+ * la fila inmediatamente anterior de menor nivel (ej. VENTAS NETAS → sus líneas); si esa fila es un % o no existe,
+ * cuelga de la siguiente fila de menor nivel después del bloque (ej. Esquema 2: detalle de la línea → su utilidad bruta).
  */
-export function filasVisibles<T extends { clave: string; nivel: number }>(filas: T[], plegados: Set<string>, nivelMax = 99) {
-  const out: { fila: T; tieneHijos: boolean }[] = []
-  let ocultarHasta: number | null = null
-  filas.forEach((f, i) => {
-    const tieneHijos = (filas[i + 1]?.nivel ?? -1) > f.nivel
-    if (ocultarHasta != null) {
-      if (f.nivel > ocultarHasta) return
-      ocultarHasta = null
-    }
-    if (f.nivel > nivelMax) return
-    out.push({ fila: f, tieneHijos })
-    if (tieneHijos && (plegados.has(f.clave) || f.nivel >= nivelMax)) ocultarHasta = f.nivel
+export function padresAgrupacion<T extends { nivel: number; tipo?: string }>(filas: T[]): (number | null)[] {
+  return filas.map((f, i) => {
+    if (f.nivel === 0) return null
+    let j = i - 1
+    while (j >= 0 && filas[j].nivel >= f.nivel) j--
+    if (j >= 0 && filas[j].tipo !== 'pct') return j
+    let k = i + 1
+    while (k < filas.length && filas[k].nivel >= f.nivel) k++
+    return k < filas.length ? k : null
   })
-  return out
+}
+
+/**
+ * Filas visibles según los plegados (filas cerradas) y el nivel máximo mostrado (botones 1, 2, 3… del Excel).
+ * `tieneHijos`: la fila agrupa a otras (se puede cerrar o abrir con un clic).
+ */
+export function filasVisibles<T extends { clave: string; nivel: number; tipo?: string }>(filas: T[], plegados: Set<string>, nivelMax = 99) {
+  const padres = padresAgrupacion(filas)
+  const conHijos = new Set(padres.filter((p): p is number => p != null))
+  const oculta = (i: number): boolean => {
+    for (let p = padres[i]; p != null; p = padres[p]) if (plegados.has(filas[p].clave)) return true
+    return false
+  }
+  return filas.flatMap((f, i) => (f.nivel > nivelMax || oculta(i) ? [] : [{ fila: f, tieneHijos: conHijos.has(i) }]))
 }
