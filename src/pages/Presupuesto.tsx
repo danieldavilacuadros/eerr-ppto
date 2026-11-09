@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Celda } from '../components/Celda'
-import { cuentasDeVista, nombreDe, puedeEditar, puedeVer, signoCuenta, useDatos } from '../lib/datos'
+import { cuentasDeVista, nombreDe, puedeEditar, puedeVer, signoCuenta, traerVistaCuentas, useDatos, type VistaCuenta } from '../lib/datos'
 import { MESES, ceros, num, parseNumero, pct, suma } from '../lib/formato'
 import { construirEsquema, crearRubroDe, filasVisibles, type FilaEERR } from '../lib/esquema'
 import { estacionalidad, r2, repartirRubro, signoRubro } from '../lib/reparto'
@@ -217,12 +217,13 @@ async function armarPlantillaMultiple(
     if (!m.has(r.cuenta)) m.set(r.cuenta, ceros())
     if (r.escenario_id === esc.id) m.get(r.cuenta)![r.mes - 1] += Number(r.monto) * signoCuenta(cuentas.get(r.cuenta))
   }
+  const excVistas = await traerVistaCuentas({ unidades: [...new Set(centros.map(c => c.unidad))] })
   const filas: FilaPlantilla[] = []
   for (const c of centros) {
     const m = porCentro.get(claveCentro(c)) ?? new Map<string, number[]>()
     // cuentas de la vista (Vistas de presupuesto) + las que ya tienen datos; sin lista de la unidad, si el centro no
     // tiene datos, sugerimos las cuentas usadas por su unidad de negocio el año anterior
-    const deVista = cuentasDeVista(cat.unidadCuentas, cat.vistaCuentas, c)
+    const deVista = cuentasDeVista(cat.unidadCuentas, excVistas, c)
     let lista = [...new Set([...m.keys(), ...(deVista ?? [])])]
     if (!lista.length) lista = [...(refPorUnidad.get(c.unidad) ?? [])]
     if (!lista.length) lista = cat.cuentas.filter(x => x.activa).map(x => x.cuenta)
@@ -336,6 +337,7 @@ function Grilla({ esc, escRef, centro: centroProp, onCambios, onVolver }: {
   const [valores, setValores] = useState<Valores | null>(null)
   const [originales, setOriginales] = useState<Valores>(new Map())
   const [ref, setRef] = useState<Valores>(new Map())
+  const [excVista, setExcVista] = useState<VistaCuenta[]>([])
   const [abiertos, setAbiertos] = useState<Set<string>>(new Set())
   const [plegados, setPlegados] = useState<Set<string>>(new Set())
   const [soloConDatos, setSoloConDatos] = useState(false)
@@ -359,10 +361,12 @@ function Grilla({ esc, escRef, centro: centroProp, onCambios, onVolver }: {
 
   const cargar = useCallback(async () => {
     setValores(null)
-    const [p, r] = await Promise.all([
+    const [p, r, vc] = await Promise.all([
       montosCentro('ppto_montos', esc.id, centro),
       escRef ? montosCentro('real_montos', escRef.id, centro) : Promise.resolve([] as Monto[]),
+      traerVistaCuentas(centro),
     ])
+    setExcVista(vc)
     const v = aValores(p)
     setOriginales(new Map([...v].map(([k, a]) => [k, [...a]])))
     setValores(v)
@@ -390,7 +394,7 @@ function Grilla({ esc, escRef, centro: centroProp, onCambios, onVolver }: {
 
   // ---- cuentas de cada rubro: las de la vista (lista de la unidad ± excepciones de la vista, ver *Vistas de presupuesto*)
   // más las que ya tienen presupuesto o real del año anterior, para no esconder montos. Sin lista: todas las del mapa.
-  const ctasVista = useMemo(() => cuentasDeVista(cat!.unidadCuentas, cat!.vistaCuentas, centro), [cat, centro])
+  const ctasVista = useMemo(() => cuentasDeVista(cat!.unidadCuentas, excVista, centro), [cat, excVista, centro])
   const cuentasPorRubro = useMemo(() => {
     const m = new Map<string, string[]>()
     const conMonto = (cta: string) => (originales.get(cta)?.some(v => v !== 0) ?? false) || (ref.get(cta)?.some(v => v !== 0) ?? false)

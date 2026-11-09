@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { cuentasDeVista, nombreDe, useDatos, type UnidadCuenta, type VistaCuenta } from '../lib/datos'
+import { cuentasDeVista, nombreDe, traerVistaCuentas, useDatos, type UnidadCuenta, type VistaCuenta } from '../lib/datos'
 import { crearRubroDe } from '../lib/esquema'
 import { supabase } from '../lib/supabase'
 import type { Centro } from '../lib/tipos'
@@ -28,7 +28,15 @@ export default function Vistas() {
   const [uc, setUc] = useState<UnidadCuenta[]>([])
   const [vc, setVc] = useState<VistaCuenta[]>([])
   const [cen, setCen] = useState<Centro[]>([])
-  useEffect(() => { if (cat) { setUc(cat.unidadCuentas); setVc(cat.vistaCuentas); setCen(cat.centros) } }, [cat])
+  const [cargandoExc, setCargandoExc] = useState(true)
+  useEffect(() => { if (cat) { setUc(cat.unidadCuentas); setCen(cat.centros) } }, [cat])
+  // las excepciones son muchas: se traen sólo las de la unidad elegida
+  useEffect(() => {
+    let vivo = true
+    setCargandoExc(true)
+    traerVistaCuentas({ unidad }).then(x => { if (vivo) { setVc(x); setCargandoExc(false) } })
+    return () => { vivo = false }
+  }, [unidad])
 
   const cuentasMap = useMemo(() => new Map((cat?.cuentas ?? []).map(c => [c.cuenta, c])), [cat])
   const rubroDe = useMemo(() => crearRubroDe(cuentasMap, cat?.excepciones ?? []), [cuentasMap, cat])
@@ -54,6 +62,16 @@ export default function Vistas() {
     for (const x of vc) { const k = clave(x); if (!m.has(k)) m.set(k, new Map()); m.get(k)!.set(x.cuenta, x.incluir) }
     return m
   }, [vc])
+  const conteoExc = useMemo(() => {
+    const m = new Map<string, { agrega: number; quita: number }>()
+    for (const x of vc) {
+      if (x.unidad !== unidad) continue
+      const n = m.get(x.cuenta) ?? { agrega: 0, quita: 0 }
+      if (x.incluir) n.agrega++; else n.quita++
+      m.set(x.cuenta, n)
+    }
+    return m
+  }, [vc, unidad])
   const lineasUnidad = useMemo(() => [...new Set(cen.filter(c => c.unidad === unidad).map(c => c.linea))]
     .sort((a, b) => nombreDe(cat?.lineas, a).localeCompare(nombreDe(cat?.lineas, b))), [cen, unidad, cat])
 
@@ -63,7 +81,7 @@ export default function Vistas() {
   const nomUnidad = nombreDe(cat.unidades, unidad)
   const nomVista = (c: Sel) => `${nomSede(c.sede)} · ${nombreDe(cat.unidades, c.unidad)} · ${nomLinea(c.linea)}`
   const falla = (e: { message: string }) => { setMsg({ tipo: 'error', texto: e.message }); recargar() }
-  const sinTablas = !cat.unidadCuentas.length && !cat.vistaCuentas.length
+  const sinTablas = !cat.unidadCuentas.length
 
   // ------------------------------------------------------------------ cambios
   async function cambiarLista(cuenta: string, incluir: boolean) {
@@ -125,6 +143,7 @@ export default function Vistas() {
       {sinTablas && <div className="alerta">Falta ejecutar la migración <code>008_cuentas_por_vista.sql</code> en Supabase: mientras tanto
         el presupuesto muestra todas las cuentas del mapa en cada vista.</div>}
       {msg && <div className={`alerta ${msg.tipo}`}>{msg.texto}</div>}
+      {cargandoExc && <div className="alerta">Cargando las excepciones de las vistas de {nombreDe(cat.unidades, unidad)}…</div>}
 
       <div className="tarjeta">
         <div className="filtros">
@@ -172,13 +191,13 @@ export default function Vistas() {
                 <th className="n">Vistas que la quitan</th></tr></thead>
               <tbody>
                 {todas.filter(c => (!soloIncluidas || listaU.has(c.cuenta)) && filtroTexto(c)).map(c => {
-                  const exc = vc.filter(x => x.unidad === unidad && x.cuenta === c.cuenta)
+                  const n = conteoExc.get(c.cuenta)
                   return (
                     <tr key={c.cuenta}>
                       <td>{c.rubroU}</td><td className="cod">{c.cuenta}</td><td>{c.nombre}</td>
                       <td><input type="checkbox" checked={listaU.has(c.cuenta)} onChange={e => cambiarLista(c.cuenta, e.target.checked)} /></td>
-                      <td className="n">{exc.filter(x => x.incluir).length || ''}</td>
-                      <td className="n">{exc.filter(x => !x.incluir).length || ''}</td>
+                      <td className="n">{n?.agrega || ''}</td>
+                      <td className="n">{n?.quita || ''}</td>
                     </tr>
                   )
                 })}

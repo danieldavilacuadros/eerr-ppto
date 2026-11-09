@@ -24,7 +24,6 @@ export interface Catalogos {
   escenarios: Escenario[]
   tipoCambio: TipoCambio[]
   unidadCuentas: UnidadCuenta[]
-  vistaCuentas: VistaCuenta[]
 }
 
 interface Ctx {
@@ -68,7 +67,7 @@ export function DatosProvider({ children }: { children: ReactNode }) {
     try {
       const uid = s.user.id
       const [p, a, sedes, lineasComerciales, unidades, lineas, centros, cuentas, rubros, excepciones, esquemas, escenarios, tipoCambio,
-        unidadCuentas, vistaCuentas] =
+        unidadCuentas] =
         await Promise.all([
           supabase.from('perfiles').select('*').eq('id', uid).maybeSingle(),
           supabase.from('accesos').select('*').eq('perfil_id', uid),
@@ -84,13 +83,12 @@ export function DatosProvider({ children }: { children: ReactNode }) {
           tabla<Escenario>('escenarios', 'anio'),
           tabla<TipoCambio>('tipo_cambio'),
           tablaOpcional<UnidadCuenta>('unidad_cuentas'),
-          tablaOpcional<VistaCuenta>('vista_cuentas'),
         ])
       if (p.error) throw new Error(p.error.message)
       setPerfil(p.data as Perfil | null)
       setAccesos((a.data ?? []) as Acceso[])
       setCat({ sedes, lineasComerciales, unidades, lineas, centros, cuentas, rubros, excepciones, esquemas, escenarios, tipoCambio,
-        unidadCuentas, vistaCuentas })
+        unidadCuentas })
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -142,6 +140,24 @@ export const esRol = (perfil: Perfil | null, ...roles: string[]) => !!perfil?.ac
 // ---------------------------------------------------------------- utilidades de catálogo
 export function nombreDe<T extends { codigo: string; nombre: string }>(lista: T[] | undefined, codigo: string) {
   return lista?.find(x => x.codigo === codigo)?.nombre ?? codigo
+}
+
+/**
+ * Excepciones por vista (son decenas de miles: no van en el catálogo). Se traen sólo las de una unidad o una vista.
+ * Devuelve [] si la tabla aún no existe.
+ */
+export async function traerVistaCuentas(f: { unidad?: string; unidades?: string[]; sede?: string; linea?: string }): Promise<VistaCuenta[]> {
+  try {
+    return await traerTodo<VistaCuenta>((d, h) => {
+      let q = supabase.from('vista_cuentas').select('sede,unidad,linea,cuenta,incluir')
+      if (f.unidad) q = q.eq('unidad', f.unidad)
+      if (f.unidades) q = q.in('unidad', f.unidades)
+      if (f.sede) q = q.eq('sede', f.sede)
+      if (f.linea) q = q.eq('linea', f.linea)
+      return q.order('sede').order('linea').order('cuenta').range(d, h) as unknown as
+        PromiseLike<{ data: VistaCuenta[] | null; error: { message: string } | null }>
+    })
+  } catch { return [] }
 }
 
 /**

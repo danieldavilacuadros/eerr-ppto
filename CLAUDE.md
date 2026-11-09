@@ -55,6 +55,11 @@ ejecutar si cambia el Excel.
   de la vista más las que ya tienen presupuesto o real del año anterior; lo digitado en un rubro se reparte sólo entre
   ellas. Unidad sin lista = todas las cuentas del mapa. Las 353 vistas se crearon solas desde SAP: hay combinaciones
   sobrantes (ej. AQP · UNI · FINANCIA / GENERAL / UNI-SEMI) para desactivar.
+  - Excepciones iniciales (`supabase/datos_008_excepciones_vistas.sql`, 09/11/2026): en cada vista con movimiento 2026
+    se quitaron las cuentas de la lista que esa vista no usó en SAP 2026 = 32,102 filas (UNI 13,848; SER 7,276; REP 4,838;
+    GEN 2,917; CORPORAT 1,131; LUB 1,048; ACC 825; FINANC 120; U-SEMINU 99). Las 6 vistas sin movimiento (FINANC)
+    conservan la lista completa. Por su volumen, `vista_cuentas` NO va en el catálogo: se trae con
+    `traerVistaCuentas` sólo para la vista (grilla), la unidad (página Vistas) o las unidades del Excel de plantilla.
 - Comparativo 2025: pospuesto por pedido de Daniel (primero presupuesto y real 2026).
 
 ## Estado anterior (2026-11-05)
