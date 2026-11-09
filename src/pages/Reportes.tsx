@@ -6,6 +6,13 @@ import { supabase, traerTodo } from '../lib/supabase'
 import { exportarTabla } from '../lib/excel'
 import type { Esquema, Monto, MontoEmpresa } from '../lib/tipos'
 
+type Fuente = 'SAP' | 'EXTRA' | 'TODO'
+const FUENTES: { codigo: Fuente; nombre: string }[] = [
+  { codigo: 'SAP', nombre: 'Solo SAP' },
+  { codigo: 'EXTRA', nombre: 'Solo extra libros' },
+  { codigo: 'TODO', nombre: 'SAP + extra libros' },
+]
+
 const ESQUEMAS: { codigo: Esquema; nombre: string; ayuda: string }[] = [
   { codigo: 'E1', nombre: 'Esquema 1', ayuda: 'Ventas, costo, utilidad bruta y gastos por naturaleza hasta el resultado neto.' },
   { codigo: 'E2', nombre: 'Esquema 2', ayuda: 'Utilidad bruta de cada línea de negocio y luego los gastos hasta el resultado neto.' },
@@ -30,7 +37,8 @@ export default function Reportes() {
   const [conCuentas, setConCuentas] = useState(false)
   const [nivelMax, setNivelMax] = useState(99)
   const [plegados, setPlegados] = useState<Set<string>>(new Set())
-  const [datos, setDatos] = useState<Monto[] | null>(null)
+  const [fuente, setFuente] = useState<Fuente>('SAP')
+  const [datos, setDatos] = useState<(Monto & { fuente: string })[] | null>(null)
   const [empresaMontos, setEmpresaMontos] = useState<MontoEmpresa[]>([])
   const [error, setError] = useState<string | null>(null)
 
@@ -40,7 +48,7 @@ export default function Reportes() {
     if (!a) return
     setDatos(null)
     setError(null)
-    traerTodo<Monto>((d, h) => supabase.rpc('resumen_montos', { p_escenarios: [a.id] }).range(d, h))
+    traerTodo<Monto & { fuente: string }>((d, h) => supabase.rpc('resumen_montos_fuente', { p_escenarios: [a.id] }).range(d, h))
       .then(setDatos).catch(e => setError(e.message))
     // participaciones e impuesto a la renta (sólo admin y contabilidad pueden leerlos)
     supabase.from('montos_empresa').select('*').eq('escenario_id', a.id)
@@ -67,13 +75,19 @@ export default function Reportes() {
 
   const visibles = useMemo(() => (cat?.centros ?? []).filter(c => puedeVer(perfil, accesos, c)), [cat, perfil, accesos])
   const unidadesLc = useMemo(() => new Set((cat?.unidades ?? []).filter(u => !lc || u.linea_comercial === lc).map(u => u.codigo)), [cat, lc])
+  // real: SAP (directo) y extra libros (ajustes de contabilidad) por separado; el presupuesto no tiene fuente
+  const esReal = a?.tipo === 'real'
+  const fuenteOk = (f: string) => !esReal || fuente === 'TODO' || f === fuente
   const filtrados = useMemo(() => (datos ?? []).filter(r =>
-    r.mes <= nMeses && (!sede || r.sede === sede) && (!unidad || r.unidad === unidad) && (!linea || r.linea === linea) &&
+    fuenteOk(r.fuente) && r.mes <= nMeses && (!sede || r.sede === sede) && (!unidad || r.unidad === unidad) && (!linea || r.linea === linea) &&
     unidadesLc.has(r.unidad) && (!empresa || (empresaDe.get(r.linea) ?? 'INCAMOTORS') === empresa)),
-  [datos, nMeses, sede, unidad, linea, unidadesLc, empresa, empresaDe])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  [datos, nMeses, sede, unidad, linea, unidadesLc, empresa, empresaDe, fuente, esReal])
 
-  // participaciones e impuesto a la renta: sólo en el total de la empresa (sin filtros)
+  // participaciones e impuesto a la renta: sólo en el total de la empresa (sin filtros); en el real son ajustes de
+  // contabilidad, así que se ven sólo cuando la fuente incluye extra libros
   const totalEmpresa = !lc && !sede && !unidad && !linea && !empresa
+  const conEmpresa = totalEmpresa && (!esReal || fuente !== 'SAP')
   const conv = (monto: number, anio: number, mes: number) => monto / (moneda === 'USD' ? tcDe(anio, mes) : 1)
 
   const rep = useMemo(() => {
@@ -89,7 +103,7 @@ export default function Reportes() {
       e.valores[n - 1] += v
     }
     let manual: Map<string, number[]> | null = null
-    if (totalEmpresa) {
+    if (conEmpresa) {
       manual = new Map()
       for (const m of empresaMontos) {
         if (m.mes > nMeses) continue
@@ -101,7 +115,7 @@ export default function Reportes() {
     }
     return construirEsquema({ filas: cat.esquemas, esquema, cuentas, rubroDe, entradas: [...ent.values()], columnas: n, conCuentas, manual })
   }, // eslint-disable-next-line react-hooks/exhaustive-deps
-  [cat, a, datos, filtrados, nMeses, esquema, conCuentas, totalEmpresa, empresaMontos, moneda])
+  [cat, a, datos, filtrados, nMeses, esquema, conCuentas, conEmpresa, empresaMontos, moneda])
 
   const volumen = useMemo(() => {
     const v = new Array(nMeses + 1).fill(0) as number[]
@@ -134,7 +148,7 @@ export default function Reportes() {
 
   function exportar() {
     if (!rep) return
-    const titulo = `${a?.nombre} · ${ESQUEMAS.find(e => e.codigo === esquema)?.nombre} · ${moneda === 'PEN' ? 'Soles' : 'Dólares'}`
+    const titulo = `${a?.nombre}${esReal ? ` (${FUENTES.find(f => f.codigo === fuente)?.nombre})` : ''} · ${ESQUEMAS.find(e => e.codigo === esquema)?.nombre} · ${moneda === 'PEN' ? 'Soles' : 'Dólares'}`
     const filtro = [lc && cat!.lineasComerciales.find(x => x.codigo === lc)?.nombre, sede && cat!.sedes.find(x => x.codigo === sede)?.nombre,
       unidad && cat!.unidades.find(x => x.codigo === unidad)?.nombre, linea && cat!.lineas.find(x => x.codigo === linea)?.nombre,
       empresa === 'NOVA_AUTOS' ? 'Nova Autos' : empresa ? 'Incamotors' : ''].filter(Boolean).join(' · ') || 'Toda la empresa'
@@ -173,6 +187,13 @@ export default function Reportes() {
             {escs.map(e => <option key={e.id} value={e.id}>{e.nombre}</option>)}
           </select>
         </label>
+        {esReal && (
+          <label>Fuente
+            <select value={fuente} onChange={e => setFuente(e.target.value as Fuente)}>
+              {FUENTES.map(f => <option key={f.codigo} value={f.codigo}>{f.nombre}</option>)}
+            </select>
+          </label>
+        )}
         <label>Hasta el mes
           <select value={nMeses} onChange={e => setHasta(Number(e.target.value))}>
             {MESES.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
@@ -236,7 +257,10 @@ export default function Reportes() {
               <button className={nivelMax === 99 ? 'activo' : ''} onClick={() => verNivel(99)}>Todo</button>
             </div>
             {rep.sinRubro.some(x => Math.abs(x) > 0.5) && <span className="chip error">Hay cuentas sin rubro: no suman (ver al final)</span>}
+            {esReal && <span className={`chip ${fuente === 'SAP' ? 'azul' : ''}`}>{fuente === 'SAP' ? 'Real directo de SAP (sin extra libros)'
+              : fuente === 'EXTRA' ? 'Sólo extra libros y ajustes de contabilidad' : 'SAP + extra libros (cuadra con contabilidad)'}</span>}
             {conManuales && !totalEmpresa && <span className="chip">Participaciones e impuesto a la renta: sólo en el total de la empresa</span>}
+            {conManuales && totalEmpresa && esReal && fuente === 'SAP' && <span className="chip">Participaciones e impuesto a la renta: se ven con extra libros</span>}
             {conManuales && totalEmpresa && !puedeVerEmpresa && <span className="chip">Participaciones e impuesto a la renta: visibles para contabilidad</span>}
           </div>
           <div className="scroll grilla-cont">

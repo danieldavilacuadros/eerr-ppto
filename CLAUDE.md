@@ -37,6 +37,11 @@ ejecutar si cambia el Excel.
   Con eso el Esquema 1 de la web cuadra exacto con el Excel (UO 33,390,765; resultado 32,947,277; neto 23,227,825).
   Los extra libros anteriores (2,812 filas, ER por líneas) quedaron en `extra_libros_respaldo_20261109` (con RLS).
   Si SAP cambia algún mes ene–set, volver a ejecutar el script (recalcula). Octubre en adelante: sólo SAP.
+- **Regla de Daniel (09/11/2026): el Real 2026 es información directa de SAP** (`real_montos`, sólo lo escribe el script
+  de SAP). El Excel es sólo referencia de contabilidad; de él quedan los extra libros (diferencias) como ajustes.
+  Estados de resultados tiene selector *Fuente* para escenarios reales: Solo SAP (por defecto) / Solo extra libros /
+  SAP + extra libros (función `resumen_montos_fuente`, migración 006). Participaciones e IR (`montos_empresa`, copiados
+  del Excel) se tratan como extra libros: sólo se ven con fuente que incluye extra libros, en el total de la empresa.
 - Comparativo 2025: pospuesto por pedido de Daniel (primero presupuesto y real 2026).
 
 ## Estado anterior (2026-11-05)
@@ -45,7 +50,7 @@ ejecutar si cambia el Excel.
 - **Repositorio:** https://github.com/danieldavilacuadros/eerr-ppto (público; plan GitHub Free).
 - **Supabase:** proyecto `eerr-ppto`, ref `tbjhilyaihzpkrignfkk`, región São Paulo, organización "Incamotors" (plan Free).
   - Migraciones aplicadas: `001_esquema`, `seed`, `002_extra_libros`, `003_distribucion_y_sap`, `004_rendimiento_rls`,
-    `005_esquemas` + `datos_005_modelo.sql` (09/11/2026).
+    `005_esquemas` + `datos_005_modelo.sql`, `datos_006_ajustes_mapa.sql`, `006_fuente_real` (09/11/2026).
   - Usuario `daniel.davila@incamotors.pe` con rol `admin`. Auth › URL Configuration apunta a GitHub Pages.
 - **Secretos GitHub:** existe `VITE_SUPABASE_ANON_KEY`. La URL va por defecto en `.github/workflows/deploy.yml`.
 - **PC de Daniel (esta):** Node 26 LTS, `.env.local` con la Publishable key (no la secreta), VPN FortiClient para SAP.
