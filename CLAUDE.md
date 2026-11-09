@@ -46,6 +46,15 @@ ejecutar si cambia el Excel.
   muestran en la del negocio (misma sede y marca): GPS/MOK/GLP +/− de UNI → ACC (la compra de GPS y MOK está en UNI en
   SAP). Editable en *Mapa de cuentas*. `resumen_montos_fuente` es security definer: aplica la regla y luego `puede_ver`.
   La columna "Real" de la grilla de presupuesto todavía no aplica estas reglas (lee real_montos directo).
+- **Vistas de presupuesto** (migración 008, 09/11/2026, pedido de Daniel): una vista = centro sede · unidad · marca
+  (`centros.activo`). Cuentas que se presupuestan: **lista por unidad de negocio** (`unidad_cuentas`) ± **excepciones por
+  vista** (`vista_cuentas.incluir` true agrega / false quita); helper `cuentasDeVista` en `src/lib/datos.tsx`. Lista inicial
+  = cuentas con movimiento SAP en Real 2026 (ACC 20, CORPORAT 46, FINANC 13, GEN 122, LUB 103, REP 96, SER 140,
+  U-SEMINU 57, UNI 202). Página *Vistas de presupuesto* (contab/admin): Lista de la unidad / Vistas (activar, crear, ver
+  cuentas de una vista) / Cuentas × vistas (matriz editable). La grilla de presupuesto muestra en cada rubro las cuentas
+  de la vista más las que ya tienen presupuesto o real del año anterior; lo digitado en un rubro se reparte sólo entre
+  ellas. Unidad sin lista = todas las cuentas del mapa. Las 353 vistas se crearon solas desde SAP: hay combinaciones
+  sobrantes (ej. AQP · UNI · FINANCIA / GENERAL / UNI-SEMI) para desactivar.
 - Comparativo 2025: pospuesto por pedido de Daniel (primero presupuesto y real 2026).
 
 ## Estado anterior (2026-11-05)
@@ -54,7 +63,8 @@ ejecutar si cambia el Excel.
 - **Repositorio:** https://github.com/danieldavilacuadros/eerr-ppto (público; plan GitHub Free).
 - **Supabase:** proyecto `eerr-ppto`, ref `tbjhilyaihzpkrignfkk`, región São Paulo, organización "Incamotors" (plan Free).
   - Migraciones aplicadas: `001_esquema`, `seed`, `002_extra_libros`, `003_distribucion_y_sap`, `004_rendimiento_rls`,
-    `005_esquemas` + `datos_005_modelo.sql`, `datos_006_ajustes_mapa.sql`, `006_fuente_real`, `007_reglas_unidad` (09/11/2026).
+    `005_esquemas` + `datos_005_modelo.sql`, `datos_006_ajustes_mapa.sql`, `006_fuente_real`, `007_reglas_unidad`,
+    `008_cuentas_por_vista` (09/11/2026). Próxima: 009.
   - Usuario `daniel.davila@incamotors.pe` con rol `admin`. Auth › URL Configuration apunta a GitHub Pages.
 - **Secretos GitHub:** existe `VITE_SUPABASE_ANON_KEY`. La URL va por defecto en `.github/workflows/deploy.yml`.
 - **PC de Daniel (esta):** Node 26 LTS, `.env.local` con la Publishable key (no la secreta), VPN FortiClient para SAP.
@@ -117,6 +127,8 @@ ejecutar si cambia el Excel.
 6. Revisar mapeos asignados por regla general (p. ej. 6281100 Retribuciones al directorio, 7011191/7011102 en ACC).
 7. Definir si los gastos generales (unidad GEN) se reparten a las líneas en el Esquema 2 (antes: factores de distribución).
 8. Editor de esquemas en la app (hoy las filas se cambian regenerando desde el Excel).
+9. Depurar en *Vistas de presupuesto*: desactivar vistas sobrantes y revisar la lista de cada unidad con los jefes
+   (las listas iniciales salen del Real 2026; las cuentas de GPS/MOK de UNI siguen la regla de unidad en reportes).
 
 ## Trabajo local
 

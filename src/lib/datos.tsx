@@ -6,6 +6,10 @@ import type {
 } from './tipos'
 
 export interface Excepcion { cuenta: string; unidad: string; rubro: string }
+/** Cuenta de la lista de una unidad de negocio (se presupuesta en todas sus vistas). */
+export interface UnidadCuenta { unidad: string; cuenta: string }
+/** Excepción de una vista (centro): agrega (incluir = true) o quita (false) una cuenta de la lista de su unidad. */
+export interface VistaCuenta { sede: string; unidad: string; linea: string; cuenta: string; incluir: boolean }
 
 export interface Catalogos {
   sedes: Sede[]
@@ -19,6 +23,8 @@ export interface Catalogos {
   esquemas: FilaEsquema[]
   escenarios: Escenario[]
   tipoCambio: TipoCambio[]
+  unidadCuentas: UnidadCuenta[]
+  vistaCuentas: VistaCuenta[]
 }
 
 interface Ctx {
@@ -42,6 +48,11 @@ async function tabla<T>(nombre: string, orden?: string): Promise<T[]> {
   })
 }
 
+/** Tabla que puede no existir todavía (migración pendiente): devuelve [] en vez de fallar. */
+async function tablaOpcional<T>(nombre: string): Promise<T[]> {
+  try { return await tabla<T>(nombre) } catch { return [] }
+}
+
 export function DatosProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
   const [cargando, setCargando] = useState(true)
@@ -56,7 +67,8 @@ export function DatosProvider({ children }: { children: ReactNode }) {
     setError(null)
     try {
       const uid = s.user.id
-      const [p, a, sedes, lineasComerciales, unidades, lineas, centros, cuentas, rubros, excepciones, esquemas, escenarios, tipoCambio] =
+      const [p, a, sedes, lineasComerciales, unidades, lineas, centros, cuentas, rubros, excepciones, esquemas, escenarios, tipoCambio,
+        unidadCuentas, vistaCuentas] =
         await Promise.all([
           supabase.from('perfiles').select('*').eq('id', uid).maybeSingle(),
           supabase.from('accesos').select('*').eq('perfil_id', uid),
@@ -71,11 +83,14 @@ export function DatosProvider({ children }: { children: ReactNode }) {
           tabla<FilaEsquema>('esquema_filas', 'orden'),
           tabla<Escenario>('escenarios', 'anio'),
           tabla<TipoCambio>('tipo_cambio'),
+          tablaOpcional<UnidadCuenta>('unidad_cuentas'),
+          tablaOpcional<VistaCuenta>('vista_cuentas'),
         ])
       if (p.error) throw new Error(p.error.message)
       setPerfil(p.data as Perfil | null)
       setAccesos((a.data ?? []) as Acceso[])
-      setCat({ sedes, lineasComerciales, unidades, lineas, centros, cuentas, rubros, excepciones, esquemas, escenarios, tipoCambio })
+      setCat({ sedes, lineasComerciales, unidades, lineas, centros, cuentas, rubros, excepciones, esquemas, escenarios, tipoCambio,
+        unidadCuentas, vistaCuentas })
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -127,6 +142,21 @@ export const esRol = (perfil: Perfil | null, ...roles: string[]) => !!perfil?.ac
 // ---------------------------------------------------------------- utilidades de catálogo
 export function nombreDe<T extends { codigo: string; nombre: string }>(lista: T[] | undefined, codigo: string) {
   return lista?.find(x => x.codigo === codigo)?.nombre ?? codigo
+}
+
+/**
+ * Cuentas que se presupuestan en una vista (centro): lista de su unidad + agregadas en la vista − quitadas en la vista.
+ * Devuelve null si la unidad no tiene lista (entonces se usan todas las cuentas del mapa).
+ */
+export function cuentasDeVista(
+  unidadCuentas: UnidadCuenta[], vistaCuentas: VistaCuenta[], c: { sede: string; unidad: string; linea: string },
+): Set<string> | null {
+  const lista = unidadCuentas.filter(x => x.unidad === c.unidad)
+  const exc = vistaCuentas.filter(x => x.sede === c.sede && x.unidad === c.unidad && x.linea === c.linea)
+  if (!lista.length && !exc.some(x => x.incluir)) return null
+  const s = new Set(lista.map(x => x.cuenta))
+  for (const x of exc) { if (x.incluir) s.add(x.cuenta); else s.delete(x.cuenta) }
+  return s
 }
 
 export { signoCuenta } from './reparto'

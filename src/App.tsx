@@ -9,6 +9,7 @@ import Ajustes from './pages/Ajustes'
 import ExtraLibros from './pages/ExtraLibros'
 import CargaReal from './pages/CargaReal'
 import Mapeos from './pages/Mapeos'
+import Vistas from './pages/Vistas'
 import Usuarios from './pages/Usuarios'
 
 const ROL_NOMBRE: Record<string, string> = {
@@ -64,6 +65,7 @@ export default function App() {
           {contab && <NavLink to="/ajustes">Ajustes y provisiones</NavLink>}
           {contab && <NavLink to="/carga-real">Carga real (SAP)</NavLink>}
           {contab && <NavLink to="/mapeos">Mapa de cuentas</NavLink>}
+          {contab && <NavLink to="/vistas">Vistas de presupuesto</NavLink>}
           {esRol(perfil, 'admin') && <div className="nav-titulo">Administración</div>}
           {esRol(perfil, 'admin') && <NavLink to="/usuarios">Usuarios y accesos</NavLink>}
         </nav>
@@ -82,6 +84,7 @@ export default function App() {
           {contab && <Route path="/ajustes" element={<Ajustes />} />}
           {contab && <Route path="/carga-real" element={<CargaReal />} />}
           {contab && <Route path="/mapeos" element={<Mapeos />} />}
+          {contab && <Route path="/vistas" element={<Vistas />} />}
           {esRol(perfil, 'admin') && <Route path="/usuarios" element={<Usuarios />} />}
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>

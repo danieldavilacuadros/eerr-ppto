@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Celda } from '../components/Celda'
-import { nombreDe, puedeEditar, puedeVer, signoCuenta, useDatos } from '../lib/datos'
+import { cuentasDeVista, nombreDe, puedeEditar, puedeVer, signoCuenta, useDatos } from '../lib/datos'
 import { MESES, ceros, num, parseNumero, pct, suma } from '../lib/formato'
 import { construirEsquema, crearRubroDe, filasVisibles, type FilaEERR } from '../lib/esquema'
 import { estacionalidad, r2, repartirRubro, signoRubro } from '../lib/reparto'
@@ -220,8 +220,10 @@ async function armarPlantillaMultiple(
   const filas: FilaPlantilla[] = []
   for (const c of centros) {
     const m = porCentro.get(claveCentro(c)) ?? new Map<string, number[]>()
-    // si el centro no tiene datos, sugerimos las cuentas usadas por su unidad de negocio el año anterior
-    let lista = [...m.keys()]
+    // cuentas de la vista (Vistas de presupuesto) + las que ya tienen datos; sin lista de la unidad, si el centro no
+    // tiene datos, sugerimos las cuentas usadas por su unidad de negocio el año anterior
+    const deVista = cuentasDeVista(cat.unidadCuentas, cat.vistaCuentas, c)
+    let lista = [...new Set([...m.keys(), ...(deVista ?? [])])]
     if (!lista.length) lista = [...(refPorUnidad.get(c.unidad) ?? [])]
     if (!lista.length) lista = cat.cuentas.filter(x => x.activa).map(x => x.cuenta)
     for (const cta of lista.sort()) {
@@ -386,18 +388,22 @@ function Grilla({ esc, escRef, centro: centroProp, onCambios, onVolver }: {
     return () => window.removeEventListener('beforeunload', h)
   }, [cambios.length])
 
-  // ---- cuentas de cada rubro (todas las cuentas del mapa, aunque no tengan datos)
+  // ---- cuentas de cada rubro: las de la vista (lista de la unidad ± excepciones de la vista, ver *Vistas de presupuesto*)
+  // más las que ya tienen presupuesto o real del año anterior, para no esconder montos. Sin lista: todas las del mapa.
+  const ctasVista = useMemo(() => cuentasDeVista(cat!.unidadCuentas, cat!.vistaCuentas, centro), [cat, centro])
   const cuentasPorRubro = useMemo(() => {
     const m = new Map<string, string[]>()
+    const conMonto = (cta: string) => (originales.get(cta)?.some(v => v !== 0) ?? false) || (ref.get(cta)?.some(v => v !== 0) ?? false)
     for (const c of cat!.cuentas) {
       if (!c.activa || c.es_estadistica) continue
+      if (ctasVista && !ctasVista.has(c.cuenta) && !conMonto(c.cuenta)) continue
       const r = rubroDe(c.cuenta, centro.unidad)
       if (!r) continue
       if (!m.has(r)) m.set(r, [])
       m.get(r)!.push(c.cuenta)
     }
     return m
-  }, [cat, rubroDe, centro.unidad])
+  }, [cat, rubroDe, centro.unidad, ctasVista, originales, ref])
   const cuentasPorRubroRef = useRef(cuentasPorRubro)
   cuentasPorRubroRef.current = cuentasPorRubro
 

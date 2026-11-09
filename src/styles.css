@@ -80,6 +80,15 @@ label.check { flex-direction: row; align-items: center; gap: 6px; font-size: 13p
 .tabla.ajustada { width: 100%; }
 .tabla.ajustada tfoot select, .tabla.ajustada tfoot input { width: 100%; min-width: 0; box-sizing: border-box; }
 .tabla .chip { white-space: nowrap; }
+/* matriz cuentas × vistas */
+.tabla.matriz th { text-align: center; font-size: 11px; min-width: 64px; }
+.tabla.matriz th.fija, .tabla.matriz td.fija { text-align: left; background: #fff; }
+.tabla.matriz thead th.fija { background: #f7f8fa; }
+.celda-matriz { text-align: center; cursor: pointer; font-weight: 600; }
+.celda-matriz:hover { background: #f1f4f9; }
+.celda-matriz.lista { color: var(--tinta); }
+.celda-matriz.agregada { color: var(--verde); background: #eef8f2; }
+.celda-matriz.quitada { color: var(--error); background: #fdf1f0; }
 
 .encabezado { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
 .sub { color: var(--gris); margin: 2px 0 10px; }
