@@ -602,7 +602,7 @@ function Grilla({ esc, escRef, centro: centroProp, onCambios, onVolver }: {
   const filaVentas = reporte?.filas.find(f => /^VENTAS NETAS/i.test(f.etiqueta))
   const ventasPpto = filaVentas ? suma(filaVentas.valores.slice(0, 12)) : 0
   const ventasReal = filaVentas?.valores[12] ?? 0
-  const pctVta = (x: number, vtas: number) => (vtas ? pct(x / Math.abs(vtas)) : '')
+  const pctVta = (x: number, vtas: number) => (vtas && Math.abs(x) > 0.5 ? pct(x / Math.abs(vtas)) : '')
   const todasAbiertas = abiertos.size > 0
   const alternarRubro = (r: string) => setAbiertos(s => { const n = new Set(s); if (n.has(r)) n.delete(r); else n.add(r); return n })
   // botones 1, 2, 3…: cierran las filas que agrupan a filas de mayor nivel que el elegido (como en Estados de resultados)
