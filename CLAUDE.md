@@ -31,6 +31,12 @@ ejecutar si cambia el Excel.
   se reparte entre sus cuentas (`src/lib/reparto.ts`): según lo ya presupuestado, si no según el real del año anterior.
 - Las vistas contable/comercial, la vista consolidada/general y los factores de distribución quedaron fuera de la app
   (sus tablas `rubros`, `mapeo_cuentas`, `consolidado_secciones`, `factores_distribucion` se conservan sin uso).
+- **Extra libros = ajustes del mapa** (09/11/2026, decisión de Daniel): `supabase/datos_006_ajustes_mapa.sql`
+  (generado por `scripts/generar_ajustes_mapa.py`) reemplazó los extra libros ene–set 2026 por "mapa del Excel − SAP"
+  por cuenta y mes: 495 filas, S/ 5,183,104. Cada ajuste va al centro donde SAP tiene más monto de esa cuenta ese mes.
+  Con eso el Esquema 1 de la web cuadra exacto con el Excel (UO 33,390,765; resultado 32,947,277; neto 23,227,825).
+  Los extra libros anteriores (2,812 filas, ER por líneas) quedaron en `extra_libros_respaldo_20261109` (con RLS).
+  Si SAP cambia algún mes ene–set, volver a ejecutar el script (recalcula). Octubre en adelante: sólo SAP.
 - Comparativo 2025: pospuesto por pedido de Daniel (primero presupuesto y real 2026).
 
 ## Estado anterior (2026-11-05)
@@ -89,14 +95,14 @@ ejecutar si cambia el Excel.
 
 ## Pendientes
 
-1. Revisar en la web el Esquema 1 y 2 con el real 2026 y el presupuesto por rubro. El real de la plataforma (SAP + extra
-   libros = 35.88 M ene–set) difiere del mapa del Excel (35.81 M) por cómo se armaron los extra libros.
-   Confirmar con contabilidad el nombre y el rubro de 6861900.
+1. Revisar en la web el Esquema 1 y 2 y el presupuesto por rubro. Confirmar con contabilidad el nombre y el rubro de
+   6861900. Ajustes de octubre en adelante: definir quién los registra (hoy el mapa del Excel llega a setiembre).
 2. Botón "Actualizar desde SAP" probado el 06/11/2026: octubre 2026 = 3,459 filas, S/ 5,761,433.18 (sólo SAP, sin extra
    libros; en línea con jul–ago). Trajo 5 cuentas nuevas, mapeadas copiando a una hermana: 6551100←6551300,
    6911124←6911107, 6941095←6941094, 7011124←7011107, 7411107←7411118. Cada mes nuevo puede traer cuentas nuevas:
    revisar *Mapa de cuentas* › "Solo sin rubro" después de cada carga.
-3. Pedir a Jorge Castro su registro extra libros mensual 2026 (formato del modelo) para reemplazar los calculados.
+3. Los ajustes del mapa no traen sede/marca: por sede o marca los reportes muestran el ajuste en el centro de mayor
+   monto SAP. Si contabilidad entrega el detalle por centro, cargarlo en *Registro extra libros*.
 4. Invitar a los jefes (Supabase › Auth › Invite user) y asignarles rol y accesos en *Usuarios*.
 5. No se ha recibido archivo de PPTO 2027; si llega, adaptar la importación.
 6. Revisar mapeos asignados por regla general (p. ej. 6281100 Retribuciones al directorio, 7011191/7011102 en ACC).
