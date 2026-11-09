@@ -346,6 +346,10 @@ function Grilla({ esc, escRef, centro: centroProp, onCambios, onVolver }: {
   const [nivelMax, setNivelMax] = useState(99)
   const [msg, setMsg] = useState<{ tipo: string; texto: string } | null>(null)
   const [guardando, setGuardando] = useState(false)
+  // autoguardado: se graba solo ~1,5 s después de la última edición; si falla, se pausa hasta la siguiente edición
+  const guardandoRef = useRef(false)
+  const [falloAuto, setFalloAuto] = useState(false)
+  const [ultimoGuardado, setUltimoGuardado] = useState<Date | null>(null)
   const [importar, setImportar] = useState(false)
 
   const cuentas = useMemo(() => new Map(cat!.cuentas.map(c => [c.cuenta, c])), [cat])
@@ -515,22 +519,40 @@ function Grilla({ esc, escRef, centro: centroProp, onCambios, onVolver }: {
     })
   }, [aplicar])
 
-  async function guardar() {
-    if (!cambios.length) return
+  async function guardar(auto = false) {
+    if (!cambios.length || guardandoRef.current) return
+    guardandoRef.current = true
     setGuardando(true)
-    setMsg(null)
+    if (!auto) setMsg(null)
+    // se graba una foto de los cambios: lo que se digite mientras tanto queda pendiente para el siguiente guardado
+    const foto = cambios
     try {
-      const filas = cambios.map(c => ({
+      const filas = foto.map(c => ({
         escenario_id: esc.id, anio: esc.anio, mes: c.mes, ...centro, cuenta: c.cuenta,
         monto: r2(c.valor * signoCuenta(cuentas.get(c.cuenta))),
       }))
       await upsertEnLotes('ppto_montos', filas, { onConflict: 'escenario_id,anio,mes,sede,unidad,linea,cuenta' })
-      setOriginales(new Map([...valores!].map(([k, a]) => [k, [...a]])))
-      setMsg({ tipo: 'ok', texto: `Guardado: ${filas.length} celda(s).` })
+      setOriginales(prev => {
+        const m = new Map(prev)
+        for (const c of foto) { const a = [...(m.get(c.cuenta) ?? ceros())]; a[c.mes - 1] = c.valor; m.set(c.cuenta, a) }
+        return m
+      })
+      setUltimoGuardado(new Date())
+      setFalloAuto(false)
+      if (auto) setMsg(m => (m?.tipo === 'error' ? null : m))
+      else setMsg({ tipo: 'ok', texto: `Guardado: ${filas.length} celda(s).` })
     } catch (e) {
-      setMsg({ tipo: 'error', texto: `No se pudo guardar: ${(e as Error).message}` })
-    } finally { setGuardando(false) }
+      if (auto) setFalloAuto(true)
+      setMsg({ tipo: 'error', texto: `No se pudo guardar${auto ? ' automáticamente' : ''}: ${(e as Error).message}. Los cambios siguen en pantalla; pulse Guardar para reintentar.` })
+    } finally { guardandoRef.current = false; setGuardando(false) }
   }
+  useEffect(() => { setFalloAuto(false) }, [valores])
+  useEffect(() => {
+    if (!editable || !cambios.length || guardando || falloAuto) return
+    const t = setTimeout(() => { guardar(true) }, 1500)
+    return () => clearTimeout(t)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cambios, guardando, falloAuto, editable])
 
   function copiarReal() {
     if (!escRef) return
@@ -617,7 +639,10 @@ function Grilla({ esc, escRef, centro: centroProp, onCambios, onVolver }: {
         {editable && escRef && <button onClick={copiarReal}>Copiar real {anioRef} + %</button>}
         <button onClick={descargar}>Descargar Excel</button>
         {editable && <button onClick={() => setImportar(v => !v)}>Cargar Excel</button>}
-        {editable && <button className="primario" disabled={!cambios.length || guardando} onClick={guardar}>
+        {editable && ultimoGuardado && !cambios.length && !guardando &&
+          <span className="ayuda" title="Las ediciones se guardan solas al dejar de digitar">Autoguardado {ultimoGuardado.toLocaleTimeString('es-PE')}</span>}
+        {editable && <button className="primario" disabled={!cambios.length || guardando} onClick={() => guardar()}
+          title="Las ediciones se guardan solas ~1,5 s después de dejar de digitar">
           {guardando ? 'Guardando…' : cambios.length ? `Guardar (${cambios.length})` : 'Guardado'}
         </button>}
       </div>
