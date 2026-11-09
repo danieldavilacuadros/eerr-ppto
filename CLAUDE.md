@@ -63,6 +63,10 @@ ejecutar si cambia el Excel.
   - Grilla de presupuesto: botones Esquema 1 / Esquema 2 / **Según vistas** (estructura del Esquema 2 con sólo los rubros
     que tienen cuentas en la vista, los grupos que los contienen y las fórmulas/totales; cuentas: las de la vista más las
     que ya tienen presupuesto grabado) y botones **Agrupar por nivel 1, 2, 3… / Todo** como en Estados de resultados.
+  - Estados de resultados también tiene **Según vistas** (Esquema 2): muestra los rubros/cuentas configurados en las
+    vistas activas que cumplen los filtros (sin sede/marca: listas de las unidades; con sede o marca: lista ± excepciones
+    de esas vistas, traídas filtradas) y además todo rubro o cuenta con montos, para no esconder dinero. Los totales no
+    cambian. Si alguna unidad filtrada no tiene lista, no oculta nada.
 - Comparativo 2025: pospuesto por pedido de Daniel (primero presupuesto y real 2026).
 
 ## Estado anterior (2026-11-05)

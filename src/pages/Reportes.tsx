@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { esRol, puedeVer, useDatos } from '../lib/datos'
+import { cuentasDeVista, esRol, puedeVer, traerVistaCuentas, useDatos, type VistaCuenta } from '../lib/datos'
 import { MESES, num, pct } from '../lib/formato'
 import { construirEsquema, crearRubroDe, filasVisibles, padresAgrupacion, type Entrada, type FilaEERR } from '../lib/esquema'
 import { supabase, traerTodo } from '../lib/supabase'
@@ -13,9 +13,12 @@ const FUENTES: { codigo: Fuente; nombre: string }[] = [
   { codigo: 'TODO', nombre: 'SAP + extra libros' },
 ]
 
-const ESQUEMAS: { codigo: Esquema; nombre: string; ayuda: string }[] = [
+/** 'VISTAS' = Esquema 2 con sólo los rubros configurados en Vistas de presupuesto para los filtros elegidos. */
+type EsqSel = Esquema | 'VISTAS'
+const ESQUEMAS: { codigo: EsqSel; nombre: string; ayuda: string }[] = [
   { codigo: 'E1', nombre: 'Esquema 1', ayuda: 'Ventas, costo, utilidad bruta y gastos por naturaleza hasta el resultado neto.' },
   { codigo: 'E2', nombre: 'Esquema 2', ayuda: 'Utilidad bruta de cada línea de negocio y luego los gastos hasta el resultado neto.' },
+  { codigo: 'VISTAS', nombre: 'Según vistas', ayuda: 'Esquema 2 sólo con los rubros y cuentas configurados en Vistas de presupuesto para los filtros elegidos (y los que tengan montos).' },
 ]
 
 export default function Reportes() {
@@ -24,7 +27,11 @@ export default function Reportes() {
   const [aId, setAId] = useState<number | undefined>(
     () => (escs.find(e => e.codigo === 'REAL_2026') ?? escs.find(e => e.tipo === 'real') ?? escs[0])?.id)
   const a = escs.find(e => e.id === aId)
-  const [esquema, setEsquema] = useState<Esquema>(() => (localStorage.getItem('eerr-esquema') as Esquema) || 'E1')
+  const [esqSel, setEsqSel] = useState<EsqSel>(() => {
+    try { return (localStorage.getItem('eerr-esquema') as EsqSel) || 'E1' } catch { return 'E1' }
+  })
+  const segunVistas = esqSel === 'VISTAS'
+  const esquema: Esquema = segunVistas ? 'E2' : esqSel as Esquema
   const [hasta, setHasta] = useState<number | null>(null)
   const [moneda, setMoneda] = useState<'PEN' | 'USD'>('PEN')
   const [lc, setLc] = useState('')
@@ -42,7 +49,7 @@ export default function Reportes() {
   const [empresaMontos, setEmpresaMontos] = useState<MontoEmpresa[]>([])
   const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => { try { localStorage.setItem('eerr-esquema', esquema) } catch { /* sin almacenamiento */ } }, [esquema])
+  useEffect(() => { try { localStorage.setItem('eerr-esquema', esqSel) } catch { /* sin almacenamiento */ } }, [esqSel])
 
   useEffect(() => {
     if (!a) return
@@ -123,10 +130,64 @@ export default function Reportes() {
     return v
   }, [filtrados, cuentas, nMeses])
 
+  // ---- "Según vistas": rubros y cuentas configurados en las vistas que cumplen los filtros
+  // Sin filtro de sede o marca basta la lista de cada unidad (sale del real de todas sus vistas); con sede o marca se
+  // aplican las excepciones de esas vistas, que se traen filtradas (son muchas).
+  const [excRep, setExcRep] = useState<VistaCuenta[] | null>([])
+  const porSedeLinea = !!(sede || linea)
+  useEffect(() => {
+    if (!segunVistas || !porSedeLinea) { setExcRep([]); return }
+    let vivo = true
+    setExcRep(null)
+    traerVistaCuentas({ unidad: unidad || undefined, sede: sede || undefined, linea: linea || undefined })
+      .then(x => { if (vivo) setExcRep(x) })
+    return () => { vivo = false }
+  }, [segunVistas, porSedeLinea, unidad, sede, linea])
+
+  const cfgVistas = useMemo(() => {
+    if (!segunVistas || !cat || excRep == null) return null
+    const vistas = visibles.filter(c => c.activo && (!sede || c.sede === sede) && (!unidad || c.unidad === unidad) &&
+      (!linea || c.linea === linea) && unidadesLc.has(c.unidad) && (!empresa || (empresaDe.get(c.linea) ?? 'INCAMOTORS') === empresa))
+    const rubros = new Set<string>()
+    const ctas = new Set<string>()
+    const agregar = (cta: string, u: string) => { ctas.add(cta); const r = rubroDe(cta, u); if (r) rubros.add(r) }
+    if (!porSedeLinea) {
+      for (const u of new Set(vistas.map(v => v.unidad))) {
+        const lista = cat.unidadCuentas.filter(x => x.unidad === u)
+        if (!lista.length) return null   // unidad sin lista: no se oculta nada
+        lista.forEach(x => agregar(x.cuenta, u))
+      }
+    } else {
+      for (const v of vistas) {
+        const s = cuentasDeVista(cat.unidadCuentas, excRep, v)
+        if (!s) return null
+        s.forEach(cta => agregar(cta, v.unidad))
+      }
+    }
+    return { rubros, ctas }
+  }, [segunVistas, cat, excRep, visibles, sede, unidad, linea, unidadesLc, empresa, empresaDe, rubroDe, porSedeLinea])
+
+  // filas ocultas: rubros y cuentas sin configuración ni montos, y grupos que se quedan sin rubros visibles
+  const ocultasVista = useMemo(() => {
+    const ocultas = new Set<string>()
+    if (!cfgVistas || !rep) return ocultas
+    const conMonto = (f: FilaEERR) => f.valores.some(v => Math.abs(v) > 0.5)
+    const padres = padresAgrupacion(rep.filas)
+    const conVisible = new Set<number>()
+    rep.filas.forEach((f, i) => {
+      const oculta = (f.tipo === 'rubro' && !cfgVistas.rubros.has(f.rubro ?? '') && !conMonto(f)) ||
+        (f.tipo === 'cuenta' && !cfgVistas.ctas.has(f.cuenta ?? '') && !conMonto(f))
+      if (oculta) { ocultas.add(f.clave); return }
+      if (f.tipo === 'rubro') for (let p = padres[i]; p != null; p = padres[p]) conVisible.add(p)
+    })
+    rep.filas.forEach((f, i) => { if (f.tipo === 'grupo' && !conVisible.has(i)) ocultas.add(f.clave) })
+    return ocultas
+  }, [cfgVistas, rep])
+
   if (!cat) return null
   const columnas = [...MESES.slice(0, nMeses).map(m => `${m} ${a?.anio ?? ''}`), `Total ${MESES[0]}–${MESES[nMeses - 1]}`]
   const maxNivel = Math.max(0, ...(rep?.filas.map(f => f.nivel) ?? [0]))
-  const vis = rep ? filasVisibles(rep.filas, plegados) : []
+  const vis = rep ? filasVisibles(rep.filas, plegados).filter(x => !ocultasVista.has(x.fila.clave)) : []
   const alternar = (f: FilaEERR) =>
     setPlegados(p => { const s = new Set(p); if (s.has(f.clave)) s.delete(f.clave); else s.add(f.clave); return s })
   // botones 1, 2, 3…: cierran las filas que agrupan a filas de mayor nivel que el elegido
@@ -148,7 +209,7 @@ export default function Reportes() {
 
   function exportar() {
     if (!rep) return
-    const titulo = `${a?.nombre}${esReal ? ` (${FUENTES.find(f => f.codigo === fuente)?.nombre})` : ''} · ${ESQUEMAS.find(e => e.codigo === esquema)?.nombre} · ${moneda === 'PEN' ? 'Soles' : 'Dólares'}`
+    const titulo = `${a?.nombre}${esReal ? ` (${FUENTES.find(f => f.codigo === fuente)?.nombre})` : ''} · ${ESQUEMAS.find(e => e.codigo === esqSel)?.nombre} · ${moneda === 'PEN' ? 'Soles' : 'Dólares'}`
     const filtro = [lc && cat!.lineasComerciales.find(x => x.codigo === lc)?.nombre, sede && cat!.sedes.find(x => x.codigo === sede)?.nombre,
       unidad && cat!.unidades.find(x => x.codigo === unidad)?.nombre, linea && cat!.lineas.find(x => x.codigo === linea)?.nombre,
       empresa === 'NOVA_AUTOS' ? 'Nova Autos' : empresa ? 'Incamotors' : ''].filter(Boolean).join(' · ') || 'Toda la empresa'
@@ -156,6 +217,7 @@ export default function Reportes() {
     const aoa: (string | number | null)[][] = [[titulo], [filtro], [], cab]
     const niveles = [0, 0, 0, 0]
     for (const f of rep.filas) {
+      if (ocultasVista.has(f.clave)) continue
       const vals = f.valores.flatMap((x, i) => {
         const v = isFinite(x) ? (f.tipo === 'pct' ? Math.round(x * 10000) / 10000 : Math.round(x * 100) / 100) : null
         if (!conPct) return [v]
@@ -166,7 +228,7 @@ export default function Reportes() {
       niveles.push(Math.min(f.nivel, 7))
     }
     const formatos = [null, ...columnas.flatMap(() => (conPct ? ['#,##0;(#,##0)', '0.0%'] : ['#,##0;(#,##0)']))]
-    exportarTabla(aoa, `EERR_${esquema}_${a?.codigo}.xlsx`, esquema === 'E1' ? 'ESQUEMA 1' : 'ESQUEMA 2', niveles, formatos)
+    exportarTabla(aoa, `EERR_${esqSel}_${a?.codigo}.xlsx`, segunVistas ? 'SEGUN VISTAS' : esquema === 'E1' ? 'ESQUEMA 1' : 'ESQUEMA 2', niveles, formatos)
   }
 
   return (
@@ -174,10 +236,10 @@ export default function Reportes() {
       <div className="encabezado">
         <div>
           <h1>Estados de resultados</h1>
-          <p className="sub">{ESQUEMAS.find(e => e.codigo === esquema)?.ayuda} · {moneda === 'PEN' ? 'Soles' : 'Dólares'}{miles ? ' (miles)' : ''}</p>
+          <p className="sub">{ESQUEMAS.find(e => e.codigo === esqSel)?.ayuda} · {moneda === 'PEN' ? 'Soles' : 'Dólares'}{miles ? ' (miles)' : ''}</p>
         </div>
         <div className="segmentado">
-          {ESQUEMAS.map(e => <button key={e.codigo} className={esquema === e.codigo ? 'activo' : ''} onClick={() => { setEsquema(e.codigo); setPlegados(new Set()); setNivelMax(99) }}>{e.nombre}</button>)}
+          {ESQUEMAS.map(e => <button key={e.codigo} className={esqSel === e.codigo ? 'activo' : ''} onClick={() => { setEsqSel(e.codigo); setPlegados(new Set()); setNivelMax(99) }}>{e.nombre}</button>)}
         </div>
       </div>
 
@@ -257,6 +319,8 @@ export default function Reportes() {
               <button className={nivelMax === 99 ? 'activo' : ''} onClick={() => verNivel(99)}>Todo</button>
             </div>
             {rep.sinRubro.some(x => Math.abs(x) > 0.5) && <span className="chip error">Hay cuentas sin rubro: no suman (ver al final)</span>}
+            {segunVistas && excRep == null && <span className="chip">Cargando la configuración de las vistas…</span>}
+            {segunVistas && excRep != null && !cfgVistas && <span className="chip">Alguna unidad no tiene lista de cuentas: se muestran todos los rubros</span>}
             {esReal && <span className={`chip ${fuente === 'SAP' ? 'azul' : ''}`}>{fuente === 'SAP' ? 'Real directo de SAP (sin extra libros)'
               : fuente === 'EXTRA' ? 'Sólo extra libros y ajustes de contabilidad' : 'SAP + extra libros (cuadra con contabilidad)'}</span>}
             {conManuales && !totalEmpresa && <span className="chip">Participaciones e impuesto a la renta: sólo en el total de la empresa</span>}
