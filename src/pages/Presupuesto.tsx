@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Celda } from '../components/Celda'
 import { cuentasDeVista, nombreDe, puedeEditar, puedeVer, signoCuenta, traerVistaCuentas, useDatos, type VistaCuenta } from '../lib/datos'
 import { MESES, ceros, num, parseNumero, pct, suma } from '../lib/formato'
@@ -344,6 +344,9 @@ function Grilla({ esc, escRef, centro: centroProp, onCambios, onVolver }: {
   // "Según vistas": estructura del Esquema 2 con sólo los rubros y cuentas configurados en *Vistas de presupuesto*
   const [segunVistas, setSegunVistas] = useState(false)
   const [nivelMax, setNivelMax] = useState(99)
+  // checks de la barra: % de cada fila sobre la venta total, y una fila con el real mensual del año anterior
+  const [verPct, setVerPct] = useState(false)
+  const [verReal, setVerReal] = useState(false)
   const [msg, setMsg] = useState<{ tipo: string; texto: string } | null>(null)
   const [guardando, setGuardando] = useState(false)
   // autoguardado: se graba solo ~1,5 s después de la última edición; si falla, se pausa hasta la siguiente edición
@@ -431,6 +434,16 @@ function Grilla({ esc, escRef, centro: centroProp, onCambios, onVolver }: {
     })
     return construirEsquema({ filas: cat!.esquemas, esquema, cuentas, rubroDe, entradas, columnas: 13 })
   }, [valores, ref, cuentas, cat, esquema, rubroDe, centro.unidad])
+  // real del año anterior mes a mes, con la misma forma del esquema (sólo si se marca el check)
+  const realMensual = useMemo(() => {
+    if (!verReal) return null
+    const entradas = [...ref.keys()].map(cta => {
+      const s = signoCuenta(cuentas.get(cta))
+      return { cuenta: cta, unidad: centro.unidad, valores: (ref.get(cta) ?? ceros()).map(x => x * s) }
+    })
+    const r = construirEsquema({ filas: cat!.esquemas, esquema, cuentas, rubroDe, entradas, columnas: 12 })
+    return new Map(r.filas.map(f => [f.clave, f.valores]))
+  }, [verReal, ref, cuentas, cat, esquema, rubroDe, centro.unidad])
 
   const conDatos = (cta: string) =>
     (valores?.get(cta)?.some(v => v !== 0) ?? false) || (ref.get(cta)?.some(v => v !== 0) ?? false) ||
@@ -585,6 +598,11 @@ function Grilla({ esc, escRef, centro: centroProp, onCambios, onVolver }: {
 
   const totalFinal = reporte?.filas.find(f => f.etiqueta.startsWith('RESULTADO DEL EJERCICIO'))
   const anioRef = escRef?.anio ?? esc.anio - 1
+  // venta total: primera fila "VENTAS NETAS" del esquema (E1: el grupo; E2: "VENTAS NETAS +")
+  const filaVentas = reporte?.filas.find(f => /^VENTAS NETAS/i.test(f.etiqueta))
+  const ventasPpto = filaVentas ? suma(filaVentas.valores.slice(0, 12)) : 0
+  const ventasReal = filaVentas?.valores[12] ?? 0
+  const pctVta = (x: number, vtas: number) => (vtas ? pct(x / Math.abs(vtas)) : '')
   const todasAbiertas = abiertos.size > 0
   const alternarRubro = (r: string) => setAbiertos(s => { const n = new Set(s); if (n.has(r)) n.delete(r); else n.add(r); return n })
   // botones 1, 2, 3…: cierran las filas que agrupan a filas de mayor nivel que el elegido (como en Estados de resultados)
@@ -599,14 +617,30 @@ function Grilla({ esc, escRef, centro: centroProp, onCambios, onVolver }: {
     setEsquema(e); setSegunVistas(porVista); setPlegados(new Set()); setNivelMax(99)
   }
   const alternarGrupo = (k: string) => setPlegados(s => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n })
-  const filaCeldas = (clave: string, v: number[], ed: boolean, r: number) => {
+  // firmado = [total presupuesto, total real] con signo de resultado (ingresos +, gastos −) para el % sobre la venta
+  const filaCeldas = (clave: string, v: number[], ed: boolean, r: number, firmado?: [number, number]) => {
     const fila = editables.indexOf(clave)
     return <>
       {v.map((x, i) => <td key={i}><Celda valor={x} editable={ed} fila={fila} col={i} onFijar={fijar} onPegar={pegar} /></td>)}
       <td><Celda valor={suma(v)} editable={ed} fila={fila} col={12} onFijar={fijar} onPegar={pegar} total /></td>
+      {verPct && <td className="n pct-vta">{firmado ? pctVta(firmado[0], ventasPpto) : ''}</td>}
       <td className="n">{num(r)}</td>
+      {verPct && <td className="n pct-vta">{firmado ? pctVta(firmado[1], ventasReal) : ''}</td>}
       <td className="n">{r ? pct(suma(v) / r - 1) : ''}</td>
     </>
+  }
+  // fila gris debajo con el real del año anterior mes a mes (v en la misma convención que la fila de arriba)
+  const filaReal = (key: string, nivel: number, v: number[] | undefined, firmadoTot?: number) => {
+    if (!verReal || !v) return null
+    return (
+      <tr key={`${key}·real`} className="fila-real">
+        <td className="fija" style={{ paddingLeft: 22 + nivel * 16 }}>Real {anioRef}</td>
+        {v.map((x, i) => <td key={i} className="n">{num(x)}</td>)}
+        <td className="n">{num(suma(v))}</td>
+        {verPct && <td className="n pct-vta">{firmadoTot != null ? pctVta(firmadoTot, ventasReal) : ''}</td>}
+        <td />{verPct && <td />}<td />
+      </tr>
+    )
   }
 
   return (
@@ -628,6 +662,10 @@ function Grilla({ esc, escRef, centro: centroProp, onCambios, onVolver }: {
         <button onClick={() => setAbiertos(todasAbiertas ? new Set() : new Set(filasEsq.filter(f => f.tipo === 'rubro').map(f => f.rubro!)))}>
           {todasAbiertas ? 'Cerrar cuentas' : 'Abrir todas las cuentas'}</button>
         <label className="check"><input type="checkbox" checked={soloConDatos} onChange={e => setSoloConDatos(e.target.checked)} /> Sólo rubros con datos</label>
+        <label className="check" title="Porcentaje de cada fila sobre la venta total (VENTAS NETAS) del presupuesto y del real">
+          <input type="checkbox" checked={verPct} onChange={e => setVerPct(e.target.checked)} /> % sobre la venta</label>
+        <label className="check" title={`Agrega debajo de cada fila el real ${anioRef} cargado, mes a mes`}>
+          <input type="checkbox" checked={verReal} onChange={e => setVerReal(e.target.checked)} /> Real {anioRef} por mes</label>
         <span className="ayuda">Agrupar por nivel:</span>
         <div className="segmentado">
           {Array.from({ length: maxNivel + 1 }, (_, i) => (
@@ -661,27 +699,37 @@ function Grilla({ esc, escRef, centro: centroProp, onCambios, onVolver }: {
               <th className="fija">Rubro / cuenta</th>
               {MESES.map(m => <th key={m} className="n">{m}</th>)}
               <th className="n">Total {esc.anio}</th>
+              {verPct && <th className="n" title={`Sobre la venta total ${esc.anio}`}>% vta</th>}
               <th className="n">Real {anioRef}</th>
+              {verPct && <th className="n" title={`Sobre la venta total ${anioRef}`}>% vta</th>}
               <th className="n">Var %</th>
             </tr>
           </thead>
           <tbody>
             {volumen.map(c => (
-              <tr key={c.cuenta} className="fila-vol">
-                <td className="fija">{c.nombre}</td>
-                {filaCeldas(`C:${c.cuenta}`, valores.get(c.cuenta) ?? ceros(), editable, suma(ref.get(c.cuenta) ?? []))}
-              </tr>
+              <Fragment key={c.cuenta}>
+                <tr className="fila-vol">
+                  <td className="fija">{c.nombre}</td>
+                  {filaCeldas(`C:${c.cuenta}`, valores.get(c.cuenta) ?? ceros(), editable, suma(ref.get(c.cuenta) ?? []))}
+                </tr>
+                {filaReal(`v${c.cuenta}`, 0, ref.get(c.cuenta) ?? ceros())}
+              </Fragment>
             ))}
             {orden.map(o => {
               if (o.tipo === 'cuenta') {
                 const cta = o.cuenta
                 const v = valores.get(cta) ?? ceros()
                 const sucia = v.some((x, i) => Math.abs(x - (originales.get(cta)?.[i] ?? 0)) > 0.004)
+                const sg = signoCuenta(cuentas.get(cta))
+                const rv = ref.get(cta) ?? ceros()
                 return (
-                  <tr key={`c${cta}`} className={`fila-cuenta${sucia ? ' sucia' : ''}`}>
-                    <td className="fija" style={{ paddingLeft: 8 + o.nivel * 16 }} title={cta}><span className="cod">{cta}</span> {cuentas.get(cta)?.nombre}</td>
-                    {filaCeldas(`C:${cta}`, v, editable && puedeCuenta(cta), suma(ref.get(cta) ?? []))}
-                  </tr>
+                  <Fragment key={`c${cta}`}>
+                    <tr className={`fila-cuenta${sucia ? ' sucia' : ''}`}>
+                      <td className="fija" style={{ paddingLeft: 8 + o.nivel * 16 }} title={cta}><span className="cod">{cta}</span> {cuentas.get(cta)?.nombre}</td>
+                      {filaCeldas(`C:${cta}`, v, editable && puedeCuenta(cta), suma(rv), [suma(v) * sg, suma(rv) * sg])}
+                    </tr>
+                    {filaReal(`c${cta}`, o.nivel, rv, suma(rv) * sg)}
+                  </Fragment>
                 )
               }
               const { f, tieneHijos } = o
@@ -690,29 +738,40 @@ function Grilla({ esc, escRef, centro: centroProp, onCambios, onVolver }: {
                 const s = signoRubro(ctas.map(c => cuentas.get(c)))
                 const abierto = abiertos.has(f.rubro!)
                 const sucia = ctas.some(c => (valores.get(c) ?? []).some((x, i) => Math.abs(x - (originales.get(c)?.[i] ?? 0)) > 0.004))
+                const rm = realMensual?.get(f.clave)
                 return (
-                  <tr key={f.clave} className={`fila-e fila-rubro n${f.nivel}${f.negrita ? ' b' : ''}${sucia ? ' sucia' : ''}`}>
+                  <Fragment key={f.clave}>
+                  <tr className={`fila-e fila-rubro n${f.nivel}${f.negrita ? ' b' : ''}${sucia ? ' sucia' : ''}`}>
                     <td className="fija" style={{ paddingLeft: 8 + f.nivel * 16 }}>
                       <button className="link flecha" disabled={!ctas.length} onClick={() => alternarRubro(f.rubro!)}
                         title={ctas.length ? (abierto ? 'Cerrar cuentas' : `Abrir ${ctas.length} cuenta(s)`) : 'Sin cuentas en el mapa'}>{ctas.length ? (abierto ? '▾' : '▸') : '·'}</button>
                       {f.etiqueta}
                     </td>
-                    {filaCeldas(`R:${f.rubro}`, f.valores.slice(0, 12).map(x => r2(x * s)), editable && ctas.length > 0 && ctas.every(puedeCuenta), f.valores[12] * s)}
+                    {filaCeldas(`R:${f.rubro}`, f.valores.slice(0, 12).map(x => r2(x * s)), editable && ctas.length > 0 && ctas.every(puedeCuenta), f.valores[12] * s,
+                      [suma(f.valores.slice(0, 12)), f.valores[12]])}
                   </tr>
+                  {filaReal(f.clave, f.nivel, rm?.map(x => r2(x * s)), rm ? suma(rm) : undefined)}
+                  </Fragment>
                 )
               }
               const tot = suma(f.valores.slice(0, 12)), r = f.valores[12]
+              const rm = realMensual?.get(f.clave)
               return (
-                <tr key={f.clave} className={`fila-e fila-${f.tipo} n${f.nivel}${f.negrita ? ' b' : ''}${tieneHijos ? ' plegable' : ''}`}
+                <Fragment key={f.clave}>
+                <tr className={`fila-e fila-${f.tipo} n${f.nivel}${f.negrita ? ' b' : ''}${tieneHijos ? ' plegable' : ''}`}
                   onClick={tieneHijos ? () => alternarGrupo(f.clave) : undefined}>
                   <td className="fija" style={{ paddingLeft: 8 + f.nivel * 16 }}>
                     <span className="flecha">{tieneHijos ? (plegados.has(f.clave) ? '▸' : '▾') : ''}</span>{f.etiqueta}
                   </td>
                   {f.valores.slice(0, 12).map((x, i) => <td key={i} className="n">{num(x)}</td>)}
                   <td className="n b">{num(tot)}</td>
+                  {verPct && <td className="n pct-vta">{pctVta(tot, ventasPpto)}</td>}
                   <td className="n">{num(r)}</td>
+                  {verPct && <td className="n pct-vta">{pctVta(r, ventasReal)}</td>}
                   <td className="n">{r ? pct(tot / Math.abs(r) - Math.sign(r)) : ''}</td>
                 </tr>
+                {filaReal(f.clave, f.nivel, rm, rm ? suma(rm) : undefined)}
+                </Fragment>
               )
             })}
           </tbody>
@@ -722,7 +781,9 @@ function Grilla({ esc, escRef, centro: centroProp, onCambios, onVolver }: {
                 <td className="fija">{totalFinal.etiqueta}</td>
                 {totalFinal.valores.slice(0, 12).map((x, i) => <td key={i} className="n">{num(x)}</td>)}
                 <td className="n b">{num(suma(totalFinal.valores.slice(0, 12)))}</td>
+                {verPct && <td className="n pct-vta">{pctVta(suma(totalFinal.valores.slice(0, 12)), ventasPpto)}</td>}
                 <td className="n">{num(totalFinal.valores[12])}</td>
+                {verPct && <td className="n pct-vta">{pctVta(totalFinal.valores[12], ventasReal)}</td>}
                 <td />
               </tr>
             </tfoot>

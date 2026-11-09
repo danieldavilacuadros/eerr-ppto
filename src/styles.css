@@ -185,3 +185,8 @@ label.check { flex-direction: row; align-items: center; gap: 6px; font-size: 13p
 .esquema tr.fila-pct td { font-style: italic; color: var(--gris); font-size: 12px; }
 .esquema tr.fila-manual td { font-style: italic; }
 .esquema tr.fila-rubro.n2 td, .esquema tr.fila-rubro.n1 td { color: #3a4150; }
+
+/* carga de presupuesto: fila con el real del año anterior y columnas de % sobre la venta */
+.grilla .fila-real td { color: #7a8394; font-style: italic; font-size: 11.5px; background: #fafbfc; padding-top: 1px; padding-bottom: 1px; }
+.grilla .fila-real td.fija { font-size: 11px; }
+.grilla td.pct-vta { color: #5b6475; font-size: 11.5px; }
