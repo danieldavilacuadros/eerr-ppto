@@ -341,8 +341,9 @@ function Grilla({ esc, escRef, centro: centroProp, onCambios, onVolver }: {
   const [abiertos, setAbiertos] = useState<Set<string>>(new Set())
   const [plegados, setPlegados] = useState<Set<string>>(new Set())
   const [soloConDatos, setSoloConDatos] = useState(false)
-  // "Según vistas": estructura del Esquema 1 con sólo los rubros y cuentas configurados en *Vistas de presupuesto*
+  // "Según vistas": estructura del Esquema 2 con sólo los rubros y cuentas configurados en *Vistas de presupuesto*
   const [segunVistas, setSegunVistas] = useState(false)
+  const [nivelMax, setNivelMax] = useState(99)
   const [msg, setMsg] = useState<{ tipo: string; texto: string } | null>(null)
   const [guardando, setGuardando] = useState(false)
   const [importar, setImportar] = useState(false)
@@ -563,6 +564,17 @@ function Grilla({ esc, escRef, centro: centroProp, onCambios, onVolver }: {
   const anioRef = escRef?.anio ?? esc.anio - 1
   const todasAbiertas = abiertos.size > 0
   const alternarRubro = (r: string) => setAbiertos(s => { const n = new Set(s); if (n.has(r)) n.delete(r); else n.add(r); return n })
+  // botones 1, 2, 3…: cierran las filas que agrupan a filas de mayor nivel que el elegido (como en Estados de resultados)
+  const maxNivel = Math.max(0, ...filasEsq.map(f => f.nivel))
+  const verNivel = (n: number) => {
+    setNivelMax(n)
+    const padres = padresAgrupacion(filasEsq)
+    setPlegados(new Set(filasEsq.flatMap((f, i) => (f.nivel > n && padres[i] != null ? [filasEsq[padres[i]!].clave] : []))))
+    if (n < 99) setAbiertos(new Set())
+  }
+  const elegirEsquema = (e: Esquema, porVista: boolean) => {
+    setEsquema(e); setSegunVistas(porVista); setPlegados(new Set()); setNivelMax(99)
+  }
   const alternarGrupo = (k: string) => setPlegados(s => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n })
   const filaCeldas = (clave: string, v: number[], ed: boolean, r: number) => {
     const fila = editables.indexOf(clave)
@@ -582,10 +594,10 @@ function Grilla({ esc, escRef, centro: centroProp, onCambios, onVolver }: {
         {!editable && <span className="chip">Solo lectura</span>}
         <div className="espacio" />
         <div className="segmentado">
-          <button className={esquema === 'E1' && !segunVistas ? 'activo' : ''} onClick={() => { setEsquema('E1'); setSegunVistas(false) }}>Esquema 1</button>
-          <button className={esquema === 'E2' && !segunVistas ? 'activo' : ''} onClick={() => { setEsquema('E2'); setSegunVistas(false) }}>Esquema 2</button>
-          <button className={segunVistas ? 'activo' : ''} title="Sólo los rubros y cuentas configurados para esta vista en Vistas de presupuesto"
-            onClick={() => { setEsquema('E1'); setSegunVistas(true) }}>Según vistas</button>
+          <button className={esquema === 'E1' && !segunVistas ? 'activo' : ''} onClick={() => elegirEsquema('E1', false)}>Esquema 1</button>
+          <button className={esquema === 'E2' && !segunVistas ? 'activo' : ''} onClick={() => elegirEsquema('E2', false)}>Esquema 2</button>
+          <button className={segunVistas ? 'activo' : ''} title="Esquema 2 con sólo los rubros y cuentas configurados para esta vista en Vistas de presupuesto"
+            onClick={() => elegirEsquema('E2', true)}>Según vistas</button>
         </div>
       </div>
 
@@ -593,6 +605,13 @@ function Grilla({ esc, escRef, centro: centroProp, onCambios, onVolver }: {
         <button onClick={() => setAbiertos(todasAbiertas ? new Set() : new Set(filasEsq.filter(f => f.tipo === 'rubro').map(f => f.rubro!)))}>
           {todasAbiertas ? 'Cerrar cuentas' : 'Abrir todas las cuentas'}</button>
         <label className="check"><input type="checkbox" checked={soloConDatos} onChange={e => setSoloConDatos(e.target.checked)} /> Sólo rubros con datos</label>
+        <span className="ayuda">Agrupar por nivel:</span>
+        <div className="segmentado">
+          {Array.from({ length: maxNivel + 1 }, (_, i) => (
+            <button key={i} className={nivelMax === i ? 'activo' : ''} onClick={() => verNivel(i)}>{i + 1}</button>
+          ))}
+          <button className={nivelMax === 99 ? 'activo' : ''} onClick={() => verNivel(99)}>Todo</button>
+        </div>
         <div className="espacio" />
         {editable && escRef && <button onClick={copiarReal}>Copiar real {anioRef} + %</button>}
         <button onClick={descargar}>Descargar Excel</button>

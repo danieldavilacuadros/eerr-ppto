@@ -60,6 +60,9 @@ ejecutar si cambia el Excel.
     GEN 2,917; CORPORAT 1,131; LUB 1,048; ACC 825; FINANC 120; U-SEMINU 99). Las 6 vistas sin movimiento (FINANC)
     conservan la lista completa. Por su volumen, `vista_cuentas` NO va en el catálogo: se trae con
     `traerVistaCuentas` sólo para la vista (grilla), la unidad (página Vistas) o las unidades del Excel de plantilla.
+  - Grilla de presupuesto: botones Esquema 1 / Esquema 2 / **Según vistas** (estructura del Esquema 2 con sólo los rubros
+    que tienen cuentas en la vista, los grupos que los contienen y las fórmulas/totales; cuentas: las de la vista más las
+    que ya tienen presupuesto grabado) y botones **Agrupar por nivel 1, 2, 3… / Todo** como en Estados de resultados.
 - Comparativo 2025: pospuesto por pedido de Daniel (primero presupuesto y real 2026).
 
 ## Estado anterior (2026-11-05)
