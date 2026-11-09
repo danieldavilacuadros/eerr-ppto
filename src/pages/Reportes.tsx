@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { cuentasDeVista, esRol, puedeVer, traerVistaCuentas, useDatos, type VistaCuenta } from '../lib/datos'
 import { MESES, num, pct } from '../lib/formato'
-import { construirEsquema, crearRubroDe, filasVisibles, padresAgrupacion, type Entrada, type FilaEERR } from '../lib/esquema'
+import { construirEsquema, crearRubroDe, filasVisibles, ocultarFormulasVacias, padresAgrupacion, type Entrada, type FilaEERR } from '../lib/esquema'
 import { supabase, traerTodo } from '../lib/supabase'
 import { exportarTabla } from '../lib/excel'
 import type { Esquema, Monto, MontoEmpresa } from '../lib/tipos'
@@ -167,7 +167,7 @@ export default function Reportes() {
     return { rubros, ctas }
   }, [segunVistas, cat, excRep, visibles, sede, unidad, linea, unidadesLc, empresa, empresaDe, rubroDe, porSedeLinea])
 
-  // filas ocultas: rubros y cuentas sin configuración ni montos, y grupos que se quedan sin rubros visibles
+  // filas ocultas: rubros y cuentas sin configuración ni montos, grupos sin rubros visibles y fórmulas sin nada visible
   const ocultasVista = useMemo(() => {
     const ocultas = new Set<string>()
     if (!cfgVistas || !rep) return ocultas
@@ -181,8 +181,9 @@ export default function Reportes() {
       if (f.tipo === 'rubro') for (let p = padres[i]; p != null; p = padres[p]) conVisible.add(p)
     })
     rep.filas.forEach((f, i) => { if (f.tipo === 'grupo' && !conVisible.has(i)) ocultas.add(f.clave) })
+    ocultarFormulasVacias(cat!.esquemas, esquema, rep.filas, ocultas)
     return ocultas
-  }, [cfgVistas, rep])
+  }, [cfgVistas, rep, cat, esquema])
 
   if (!cat) return null
   const columnas = [...MESES.slice(0, nMeses).map(m => `${m} ${a?.anio ?? ''}`), `Total ${MESES[0]}–${MESES[nMeses - 1]}`]

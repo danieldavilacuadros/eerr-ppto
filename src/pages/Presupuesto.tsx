@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Celda } from '../components/Celda'
 import { cuentasDeVista, nombreDe, puedeEditar, puedeVer, signoCuenta, traerVistaCuentas, useDatos, type VistaCuenta } from '../lib/datos'
 import { MESES, ceros, num, parseNumero, pct, suma } from '../lib/formato'
-import { construirEsquema, crearRubroDe, filasVisibles, padresAgrupacion, type FilaEERR } from '../lib/esquema'
+import { construirEsquema, crearRubroDe, filasVisibles, ocultarFormulasVacias, padresAgrupacion, type FilaEERR } from '../lib/esquema'
 import { estacionalidad, r2, repartirRubro, signoRubro } from '../lib/reparto'
 import { supabase, traerTodo, upsertEnLotes } from '../lib/supabase'
 import { exportarPlantilla, leerPlantilla, type FilaPlantilla } from '../lib/excel'
@@ -435,7 +435,7 @@ function Grilla({ esc, escRef, centro: centroProp, onCambios, onVolver }: {
   // filas en pantalla: participaciones e impuesto a la renta no se presupuestan por centro
   // la agrupación se calcula con todas las filas del esquema (incluidas las de %), que luego no se muestran
   const filasEsq = (reporte?.filas ?? []).filter(f => f.tipo !== 'sin')
-  // "Según vistas": rubros con cuentas en la vista y los grupos que los contienen; las fórmulas (totales) se mantienen
+  // "Según vistas": rubros con cuentas en la vista, los grupos que los contienen y las fórmulas con algo visible
   const ocultasVista = new Set<string>()
   if (segunVistas) {
     const padres = padresAgrupacion(filasEsq)
@@ -448,6 +448,7 @@ function Grilla({ esc, escRef, centro: centroProp, onCambios, onVolver }: {
       if ((f.tipo === 'rubro' && !(cuentasPorRubro.get(f.rubro ?? '') ?? []).length) || (f.tipo === 'grupo' && !conVisible.has(i)))
         ocultasVista.add(f.clave)
     })
+    ocultarFormulasVacias(cat!.esquemas, esquema, filasEsq, ocultasVista)
   }
   const mostrar = (f: FilaEERR) => f.tipo !== 'pct' && f.tipo !== 'manual' && !ocultasVista.has(f.clave) &&
     (!soloConDatos || f.tipo !== 'rubro' || f.valores.some(v => Math.abs(v) > 0.5) ||

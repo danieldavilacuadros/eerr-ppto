@@ -152,3 +152,36 @@ export function filasVisibles<T extends { clave: string; nivel: number; tipo?: s
   }
   return filas.flatMap((f, i) => (f.nivel > nivelMax || oculta(i) ? [] : [{ fila: f, tieneHijos: conHijos.has(i) }]))
 }
+
+/**
+ * "Según vistas": agrega a `ocultas` las fórmulas (subtotales como "FIN y EQU - UTILIDAD BRUTA") cuyas filas
+ * referidas están todas ocultas y que no agrupan ninguna fila visible, y los % calculados sobre ellas.
+ * Las fórmulas que refieren filas visibles o no evaluables (ej. participaciones) se mantienen.
+ */
+export function ocultarFormulasVacias(defs: FilaEsquema[], esquema: string, filas: FilaEERR[], ocultas: Set<string>) {
+  const def = new Map(defs.filter(d => d.esquema === esquema).map(d => [d.codigo, d]))
+  const idx = new Map(filas.map((f, i) => [f.clave, i]))
+  const padres = padresAgrupacion(filas)
+  const conVisible = new Set<number>()
+  filas.forEach((f, i) => {
+    if (f.tipo === 'formula' || f.tipo === 'pct' || ocultas.has(f.clave)) return
+    for (let p = padres[i]; p != null; p = padres[p]) conVisible.add(p)
+  })
+  const memo = new Map<string, boolean>()
+  const vacia = (codigo: string, pila = new Set<string>()): boolean => {
+    if (memo.has(codigo)) return memo.get(codigo)!
+    const i = idx.get(codigo)
+    const d = def.get(codigo)
+    if (i == null || !d || pila.has(codigo)) return false
+    let r: boolean
+    if (d.tipo === 'formula') {
+      pila.add(codigo)
+      r = !conVisible.has(i) && (d.formula ?? []).every(ref => vacia(ref.replace(/^-/, ''), pila))
+      pila.delete(codigo)
+    } else if (d.tipo === 'pct') r = vacia((d.formula ?? [])[0] ?? '', pila)
+    else r = ocultas.has(codigo)
+    memo.set(codigo, r)
+    return r
+  }
+  for (const f of filas) if ((f.tipo === 'formula' || f.tipo === 'pct') && vacia(f.clave)) ocultas.add(f.clave)
+}
