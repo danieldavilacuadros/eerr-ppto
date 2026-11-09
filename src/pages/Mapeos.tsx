@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useDatos } from '../lib/datos'
 import { supabase } from '../lib/supabase'
 
@@ -143,6 +143,8 @@ export default function Mapeos() {
           </table>
         </div>
 
+        <ReglasUnidad />
+
         <div className="tarjeta">
           <h3>Rubros ({cat.rubros.length})</h3>
           <p className="sub">Un rubro que no está en los esquemas no aparece en los reportes (sus cuentas quedan como "sin rubro").</p>
@@ -167,6 +169,67 @@ export default function Mapeos() {
           </div>
         </div>
       </div>
+    </div>
+  )
+}
+
+interface Regla { rubro: string; unidad_origen: string; unidad_destino: string; activo: boolean }
+
+/** Reglas para reportes: un rubro registrado en SAP en una unidad se muestra en otra (misma sede y marca). */
+function ReglasUnidad() {
+  const { cat } = useDatos()
+  const [reglas, setReglas] = useState<Regla[] | null>(null)
+  const [nueva, setNueva] = useState({ rubro: '', unidad_origen: '', unidad_destino: '' })
+  const [msg, setMsg] = useState<string | null>(null)
+  const cargar = useCallback(() => {
+    supabase.from('reglas_unidad').select('*').order('rubro').then(({ data, error }) => {
+      if (error) setMsg('Falta ejecutar la migración 007 en Supabase.')
+      setReglas((data ?? []) as Regla[])
+    })
+  }, [])
+  useEffect(cargar, [cargar])
+  if (!cat || !reglas) return null
+  const nombreU = (u: string) => cat.unidades.find(x => x.codigo === u)?.nombre ?? u
+  async function guardar(r: Partial<Regla> & { rubro: string; unidad_origen: string }) {
+    const { error } = await supabase.from('reglas_unidad').upsert(r)
+    setMsg(error ? error.message : 'Guardado. Los reportes ya usan la regla.')
+    if (!error) cargar()
+  }
+  async function quitar(r: Regla) {
+    const { error } = await supabase.from('reglas_unidad').delete().eq('rubro', r.rubro).eq('unidad_origen', r.unidad_origen)
+    setMsg(error ? error.message : 'Regla quitada.')
+    if (!error) cargar()
+  }
+  return (
+    <div className="tarjeta">
+      <h3>Reglas de unidad para los reportes</h3>
+      <p className="sub">Cuando SAP registra un rubro en una unidad que no es la de su negocio (ej. compra de GPS en Venta de unidades), los
+        reportes lo muestran en la unidad de destino, con la misma sede y marca. SAP no se modifica y el total de la empresa no cambia.</p>
+      {msg && <div className="alerta">{msg}</div>}
+      <table className="tabla simple">
+        <thead><tr><th>Rubro</th><th>Registrado en</th><th>Se muestra en</th><th>Activa</th><th /></tr></thead>
+        <tbody>
+          {reglas.map(r => (
+            <tr key={`${r.rubro}|${r.unidad_origen}`}>
+              <td>{r.rubro}</td><td>{nombreU(r.unidad_origen)}</td><td>{nombreU(r.unidad_destino)}</td>
+              <td><input type="checkbox" checked={r.activo} onChange={e => guardar({ ...r, activo: e.target.checked })} /></td>
+              <td><button className="link" onClick={() => quitar(r)}>Quitar</button></td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td><select value={nueva.rubro} onChange={e => setNueva({ ...nueva, rubro: e.target.value })}>
+              <option value="">Rubro…</option>{cat.rubros.map(r => <option key={r.codigo} value={r.codigo}>{r.codigo}</option>)}</select></td>
+            <td><select value={nueva.unidad_origen} onChange={e => setNueva({ ...nueva, unidad_origen: e.target.value })}>
+              <option value="">Unidad…</option>{cat.unidades.map(u => <option key={u.codigo} value={u.codigo}>{u.nombre}</option>)}</select></td>
+            <td><select value={nueva.unidad_destino} onChange={e => setNueva({ ...nueva, unidad_destino: e.target.value })}>
+              <option value="">Unidad…</option>{cat.unidades.map(u => <option key={u.codigo} value={u.codigo}>{u.nombre}</option>)}</select></td>
+            <td colSpan={2}><button disabled={!nueva.rubro || !nueva.unidad_origen || !nueva.unidad_destino || nueva.unidad_origen === nueva.unidad_destino}
+              onClick={() => { guardar({ ...nueva, activo: true }); setNueva({ rubro: '', unidad_origen: '', unidad_destino: '' }) }}>Agregar</button></td>
+          </tr>
+        </tfoot>
+      </table>
     </div>
   )
 }

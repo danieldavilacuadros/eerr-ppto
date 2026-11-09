@@ -42,6 +42,10 @@ ejecutar si cambia el Excel.
   Estados de resultados tiene selector *Fuente* para escenarios reales: Solo SAP (por defecto) / Solo extra libros /
   SAP + extra libros (función `resumen_montos_fuente`, migración 006). Participaciones e IR (`montos_empresa`, copiados
   del Excel) se tratan como extra libros: sólo se ven con fuente que incluye extra libros, en el total de la empresa.
+- **Reglas de unidad** (`reglas_unidad`, migración 007): en los reportes, rubros que SAP registra en otra unidad se
+  muestran en la del negocio (misma sede y marca): GPS/MOK/GLP +/− de UNI → ACC (la compra de GPS y MOK está en UNI en
+  SAP). Editable en *Mapa de cuentas*. `resumen_montos_fuente` es security definer: aplica la regla y luego `puede_ver`.
+  La columna "Real" de la grilla de presupuesto todavía no aplica estas reglas (lee real_montos directo).
 - Comparativo 2025: pospuesto por pedido de Daniel (primero presupuesto y real 2026).
 
 ## Estado anterior (2026-11-05)
@@ -50,7 +54,7 @@ ejecutar si cambia el Excel.
 - **Repositorio:** https://github.com/danieldavilacuadros/eerr-ppto (público; plan GitHub Free).
 - **Supabase:** proyecto `eerr-ppto`, ref `tbjhilyaihzpkrignfkk`, región São Paulo, organización "Incamotors" (plan Free).
   - Migraciones aplicadas: `001_esquema`, `seed`, `002_extra_libros`, `003_distribucion_y_sap`, `004_rendimiento_rls`,
-    `005_esquemas` + `datos_005_modelo.sql`, `datos_006_ajustes_mapa.sql`, `006_fuente_real` (09/11/2026).
+    `005_esquemas` + `datos_005_modelo.sql`, `datos_006_ajustes_mapa.sql`, `006_fuente_real`, `007_reglas_unidad` (09/11/2026).
   - Usuario `daniel.davila@incamotors.pe` con rol `admin`. Auth › URL Configuration apunta a GitHub Pages.
 - **Secretos GitHub:** existe `VITE_SUPABASE_ANON_KEY`. La URL va por defecto en `.github/workflows/deploy.yml`.
 - **PC de Daniel (esta):** Node 26 LTS, `.env.local` con la Publishable key (no la secreta), VPN FortiClient para SAP.
